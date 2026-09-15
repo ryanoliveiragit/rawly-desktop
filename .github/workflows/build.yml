@@ -79,6 +79,9 @@ jobs:
           notarize=false
           if [ -z "$CSC_LINK" ]; then
             echo "Sem certificado: o app do Mac sai sem assinatura (Gatekeeper vai avisar)."
+            # Vazia, a variável ainda conta como "definida" para o electron-builder, que tenta
+            # abrir o caminho "" como certificado e falha com "not a file".
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           elif [ -n "$APPLE_ID" ]; then
             notarize=true
@@ -94,6 +97,7 @@ jobs:
         run: |
           if [ -z "$WIN_CSC_LINK" ]; then
             echo "Sem certificado: o instalador do Windows sai sem assinatura (SmartScreen vai avisar)."
+            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
           fi
           npm run compile
           npx electron-builder --win --publish never
