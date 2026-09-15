@@ -1,0 +1,36 @@
+{
+	"name": "rawly-desktop",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Rawly para Mac, Linux e Windows: a casca que abre o app da Nevus Digital.",
+	"author": "Nevus Digital",
+	"homepage": "https://rawly-ten.vercel.app",
+	"license": "UNLICENSED",
+	"main": "out/main.js",
+	"desktopName": "rawly-desktop.desktop",
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"compile": "tsc && node scripts/copy-static.mjs",
+		"dev": "npm run compile && electron . --dev",
+		"start": "npm run compile && electron .",
+		"icons": "python3 scripts/make-icon.py && node scripts/make-icons.mjs",
+		"pack": "npm run compile && electron-builder --dir",
+		"dist": "npm run compile && electron-builder --publish never",
+		"dist:mac": "npm run compile && electron-builder --mac --publish never",
+		"dist:win": "npm run compile && electron-builder --win --publish never",
+		"dist:linux": "npm run compile && electron-builder --linux --publish never",
+		"upload:r2": "node scripts/upload-r2.mjs",
+		"publish:local": "bash scripts/publish-local.sh"
+	},
+	"dependencies": {
+		"electron-updater": "^6.8.9"
+	},
+	"devDependencies": {
+		"@aws-sdk/client-s3": "^3.1132.0",
+		"@types/node": "^24.0.0",
+		"electron": "^44.3.0",
+		"electron-builder": "^26.15.3",
+		"png2icons": "^2.0.1",
+		"typescript": "^5.9.0"
+	}
+}

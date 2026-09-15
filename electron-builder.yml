@@ -1,0 +1,91 @@
+# Empacotamento do Rawly para Mac, Linux e Windows (electron-builder).
+#
+# Os nomes dos artefatos são fixos porque o site os serve em
+# `https://rawly-ten.vercel.app/downloads/desktop/<nome>` (e os `latest*.yml`
+# do atualizador apontam para eles). O `publish` abaixo só diz ao atualizador
+# onde procurar (vai para o `app-update.yml` do pacote); quem sobe os arquivos
+# para o R2 é a CI, não o electron-builder.
+# A assinatura é opcional: sem os certificados o build sai sem assinar (a CI
+# desliga a busca de identidade no Mac) e o instalador avisa Gatekeeper /
+# SmartScreen. A notarização fica desligada aqui e a CI a liga com
+# `-c.mac.notarize=true` quando o APPLE_ID existe.
+appId: digital.nevus.rawly
+productName: Rawly
+copyright: Copyright © 2026 Nevus Digital
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: build/badge
+    to: badge
+  - from: build/icon-512.png
+    to: icon.png
+publish:
+  provider: generic
+  url: https://rawly-ten.vercel.app/downloads/desktop/
+  channel: latest
+
+mac:
+  category: public.app-category.business
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  artifactName: Rawly-mac-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: false
+  extendInfo:
+    NSMicrophoneUsageDescription: O Rawly usa o microfone nas chamadas de voz.
+    NSCameraUsageDescription: O Rawly usa a câmera nas chamadas com vídeo.
+dmg:
+  artifactName: Rawly-mac-${arch}.${ext}
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Rawly-Setup-${arch}.${ext}
+nsis:
+  artifactName: Rawly-Setup-${arch}.${ext}
+  # Instala na pasta do usuário, sem pedir administrador.
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Rawly
+  deleteAppDataOnUninstall: false
+  language: "1046"
+
+linux:
+  icon: build/icon.png
+  category: Network
+  # O nome do .desktop bate com o app_id do Electron: o lançador agrupa a janela e mostra o selo.
+  syncDesktopName: true
+  synopsis: Rawly, o CRM da Nevus Digital
+  description: Atendimento, projetos e tickets com o histórico completo à mão da equipe inteira.
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+appImage:
+  artifactName: Rawly-linux-x86_64.${ext}
+deb:
+  artifactName: Rawly-linux-amd64.${ext}
+  maintainer: Nevus Digital <contato@nevusdigital.com.br>
+# Fedora, openSUSE e afins: instala com dois cliques e entra no menu, sem o `chmod +x` do AppImage.
+rpm:
+  artifactName: Rawly-linux-x86_64.${ext}
+  maintainer: Nevus Digital <contato@nevusdigital.com.br>
