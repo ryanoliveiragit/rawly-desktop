@@ -1,5 +1,5 @@
 // Leva para `out/` o que não passa pelo tsc: as páginas do seletor de tela, a offline, a faixa e o cursor do controle remoto.
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,8 +13,13 @@ for (const file of [
 	'remote-control/overlay.html',
 	'remote-control/overlay.js',
 	'remote-control/cursor-overlay.html',
-	'remote-control/cursor-overlay.js'
+	'remote-control/cursor-overlay-page.js'
 ]) {
+	// Script de página com o mesmo nome de um módulo .ts sobrescreve o que o tsc compilou:
+	// foi assim que o 0.4.0 carregou o script do cursor no processo principal e não abria.
+	if (file.endsWith('.js') && existsSync(`${src}${file.replace(/\.js$/, '.ts')}`)) {
+		throw new Error(`${file} tem o mesmo nome de ${file.replace(/\.js$/, '.ts')}: renomeie o script da página.`);
+	}
 	mkdirSync(dirname(`${out}${file}`), { recursive: true });
 	copyFileSync(`${src}${file}`, `${out}${file}`);
 }
