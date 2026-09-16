@@ -20,6 +20,7 @@ O preload expõe ao site, via `contextBridge`:
 | `platform` | `'darwin'`, `'win32'` ou `'linux'` |
 | `version` | a versão da casca (`desktop/package.json`) |
 | `setBadge(count)` | o número de não lidas para o ícone; `0` limpa. Devolve uma Promise |
+| `control` | controle remoto da tela: `capabilities`, `sharedSources`, `start`, `input`, `stop`, `onStop` (contrato em `docs/controle-remoto.md`, funcionamento e permissões em `docs/apps.md`) |
 
 O user agent leva o sufixo `RawlyDesktop/<versão>`, se o servidor precisar saber.
 
@@ -122,8 +123,13 @@ desktop/
   src/menu.ts            menu em pt-BR
   src/window-state.ts    tamanho e posição lembrados
   src/offline.html/.js   página sem conexão
+  src/remote-control/    controle remoto da tela: sessão e travas (index), validação (protocol),
+                         tabelas de teclas (keymap), coordenadas (geometry), SendInput/CoreGraphics/XTEST
+                         pelo koffi (native-backend, windows-input), portal do Wayland (portal-backend),
+                         a faixa "está controlando sua tela" (overlay.*)
+  test/                  npm test: tabelas, coordenadas, validação e fila (node --test sobre out/)
   build/                 ícones, selos e entitlements do Mac
-  scripts/               copy-static, make-icon.py, make-icons.mjs
+  scripts/               copy-static, make-icon.py, make-icons.mjs, koffi-mac.mjs, probe-remote-control.cjs
   electron-builder.yml   alvos, nomes dos artefatos, assinatura, publish
 ```
 

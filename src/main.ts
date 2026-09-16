@@ -3,7 +3,8 @@
  * produção, como o Discord. O app inteiro continua no site; aqui ficam só as
  * coisas que um app instalado faz e o navegador não: janela própria lembrada
  * entre aberturas, uma instância só, seletor de tela para o "Compartilhar
- * tela", selo de não lidas no ícone, página offline e atualização automática.
+ * tela", selo de não lidas no ícone, página offline, atualização automática e o
+ * controle remoto da tela (`remote-control/`).
  *
  * Segurança: a janela só carrega a origem do app; todo link para fora abre
  * no navegador do sistema; o site roda no sandbox, sem Node, e só enxerga a
@@ -25,12 +26,16 @@ import { isAppUrl, readConfig } from './config';
 import { aboutPanel, buildMenu } from './menu';
 import { outPath, resourcePath } from './paths';
 import { installPermissionHandlers } from './permissions';
+import { installRemoteControl } from './remote-control';
 import { installScreenShare } from './screen-picker';
 import { startUpdater } from './updater';
 import { DEFAULT_SIZE, readWindowState, trackWindowState } from './window-state';
 
 const APP_USER_MODEL_ID = 'digital.nevus.rawly';
 const BACKGROUND = '#17171a';
+/** A faixa de status do site tem 28px (× a escala da interface): a barra do sistema some e os controles da janela caem nela. */
+const TITLE_BAR_HEIGHT = 32;
+const TITLE_BAR_SYMBOL = '#b8b8c0';
 
 const config = readConfig();
 let mainWindow: BrowserWindow | null = null;
@@ -45,8 +50,9 @@ if (!app.isPackaged) {
 	app.setPath('userData', path.join(app.getPath('appData'), 'Rawly-dev'));
 }
 if (process.platform === 'linux') {
-	// Wayland: captura de tela pelo PipeWire.
-	app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+	// Wayland: captura de tela pelo PipeWire, e o atalho global de parar o controle remoto pelo
+	// portal GlobalShortcuts (sem ele o atalho só funcionaria com a janela do Rawly em foco).
+	app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer,GlobalShortcutsPortal');
 	// O .desktop que o instalador cria (`desktopName` no package.json): o lançador agrupa a janela e mostra o selo.
 	app.setDesktopName('rawly-desktop.desktop');
 }
@@ -81,7 +87,11 @@ function bootstrap(): void {
 		session.defaultSession.setSpellCheckerLanguages(['pt-BR', 'en-US']);
 	}
 	installPermissionHandlers(session.defaultSession, config.appUrl);
-	installScreenShare(() => mainWindow);
+	const remoteControl = installRemoteControl({ appUrl: config.appUrl });
+	installScreenShare(
+		() => mainWindow,
+		(source) => remoteControl.recordSharedSource(source)
+	);
 	ipcMain.handle('badge:set', (event, count: unknown) => {
 		// Só o site manda no selo; a página offline e qualquer outra origem são ignoradas.
 		if (!isAppUrl(event.senderFrame?.url ?? '', config.appUrl)) return;
@@ -110,7 +120,7 @@ function webPreferences(): BrowserWindowConstructorOptions['webPreferences'] {
 		sandbox: true,
 		nodeIntegration: false,
 		spellcheck: true,
-		additionalArguments: [`--rawly-version=${app.getVersion()}`]
+		additionalArguments: [`--rawly-version=${app.getVersion()}`, `--rawly-chrome=hidden:${TITLE_BAR_HEIGHT}`]
 	};
 }
 
@@ -124,6 +134,13 @@ function createMainWindow(): BrowserWindow {
 		backgroundColor: BACKGROUND,
 		// Windows e Linux: sem barra de menu à vista (Alt mostra), como o Discord.
 		autoHideMenuBar: process.platform !== 'darwin',
+		// A barra do sistema some (pedido em 15/09/2026): a faixa de status do site vira a
+		// barra da janela — arrasta por ela, e os botões de fechar/minimizar/maximizar
+		// ficam sobrepostos nela (no Mac, os semáforos no canto, sobre o trilho).
+		titleBarStyle: 'hidden',
+		...(process.platform === 'darwin'
+			? { trafficLightPosition: { x: 12, y: 9 } }
+			: { titleBarOverlay: { color: BACKGROUND, symbolColor: TITLE_BAR_SYMBOL, height: TITLE_BAR_HEIGHT } }),
 		icon: process.platform === 'linux' ? resourcePath('icon.png') : undefined,
 		webPreferences: webPreferences()
 	});

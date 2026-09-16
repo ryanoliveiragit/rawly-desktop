@@ -16,7 +16,7 @@ export CSC_IDENTITY_AUTO_DISCOVERY=false
 npm ci
 npm run compile
 case "$(uname -s)" in
-	Darwin) npx electron-builder --mac --arm64 --x64 --publish never ;;
+	Darwin) node scripts/koffi-mac.mjs && npx electron-builder --mac --arm64 --x64 --publish never ;;
 	Linux) npx electron-builder --linux --publish never ;;
 	MINGW*|MSYS*|CYGWIN*) npx electron-builder --win --publish never ;;
 	*) echo "Sistema não suportado: $(uname -s)"; exit 1 ;;

@@ -1,6 +1,6 @@
 {
 	"name": "rawly-desktop",
-	"version": "0.1.0",
+	"version": "0.3.0",
 	"private": true,
 	"description": "Rawly para Mac, Linux e Windows: a casca que abre o app da Nevus Digital.",
 	"author": "Nevus Digital",
@@ -11,19 +11,22 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"compile": "tsc && node scripts/copy-static.mjs",
+		"test": "npm run compile && node --test \"test/**/*.test.cjs\"",
 		"dev": "npm run compile && electron . --dev",
 		"start": "npm run compile && electron .",
 		"icons": "python3 scripts/make-icon.py && node scripts/make-icons.mjs",
 		"pack": "npm run compile && electron-builder --dir",
 		"dist": "npm run compile && electron-builder --publish never",
-		"dist:mac": "npm run compile && electron-builder --mac --publish never",
+		"dist:mac": "npm run compile && node scripts/koffi-mac.mjs && electron-builder --mac --publish never",
 		"dist:win": "npm run compile && electron-builder --win --publish never",
 		"dist:linux": "npm run compile && electron-builder --linux --publish never",
 		"upload:r2": "node scripts/upload-r2.mjs",
 		"publish:local": "bash scripts/publish-local.sh"
 	},
 	"dependencies": {
-		"electron-updater": "^6.8.9"
+		"@particle/dbus-next": "0.11.4",
+		"electron-updater": "^6.8.9",
+		"koffi": "3.3.0"
 	},
 	"devDependencies": {
 		"@aws-sdk/client-s3": "^3.1132.0",

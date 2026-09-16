@@ -11,12 +11,18 @@ import type { PickerChoice, PickerPayload, PickerSource } from './picker-preload
  * Linux com Wayland, o próprio `getSources` abre o seletor do sistema (portal
  * do PipeWire) e devolve só o que a pessoa escolheu: aí não há o que perguntar.
  * O áudio do sistema só existe no Windows (`loopback`).
+ *
+ * Cada fonte escolhida vai para `onShared`: o controle remoto casa a tela compartilhada com o
+ * monitor certo por ela (no seletor do sistema do Mac não há escolha para ouvir).
  */
 const wayland =
 	process.platform === 'linux' &&
 	(process.env.XDG_SESSION_TYPE === 'wayland' || Boolean(process.env.WAYLAND_DISPLAY));
 
-export function installScreenShare(getParent: () => BrowserWindow | null): void {
+export function installScreenShare(
+	getParent: () => BrowserWindow | null,
+	onShared: (source: Electron.DesktopCapturerSource) => void = () => {}
+): void {
 	session.defaultSession.setDisplayMediaRequestHandler(
 		async (request, callback) => {
 			// O callback só aceita uma resposta; sem argumento, o pedido é negado
@@ -43,6 +49,7 @@ export function installScreenShare(getParent: () => BrowserWindow | null): void 
 					return;
 				}
 				if (wayland && sources.length === 1) {
+					onShared(sources[0]!);
 					answer(streamsFor(sources[0]!, canLoopback));
 					return;
 				}
@@ -62,6 +69,7 @@ export function installScreenShare(getParent: () => BrowserWindow | null): void 
 					answer();
 					return;
 				}
+				onShared(chosen);
 				answer(streamsFor(chosen, canLoopback && choice!.audio));
 			} catch (err) {
 				console.warn('[rawly] compartilhar tela falhou', err);

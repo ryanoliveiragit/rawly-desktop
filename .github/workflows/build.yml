@@ -87,6 +87,8 @@ jobs:
             notarize=true
           fi
           npm run compile
+          # O binário do koffi (controle remoto) das duas arquiteturas, não só a do runner.
+          node scripts/koffi-mac.mjs
           npx electron-builder --mac --publish never -c.mac.notarize=$notarize
 
       - name: Empacotar para Windows (instalador x64)

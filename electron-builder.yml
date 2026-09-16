@@ -18,6 +18,11 @@ directories:
 files:
   - out/**/*
   - package.json
+# O controle remoto usa o koffi (FFI): o `.node` precisa ficar fora do asar para carregar, e não
+# há o que recompilar para o Electron (N-API, binários prontos por plataforma).
+asarUnpack:
+  - node_modules/@koromix/**
+npmRebuild: false
 extraResources:
   - from: build/badge
     to: badge
