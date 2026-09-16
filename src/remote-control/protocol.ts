@@ -48,12 +48,17 @@ export type StopReason = 'user' | 'shortcut' | 'error' | 'closed';
 
 export interface StartOptions {
 	controllerName: string;
+	/** A foto de quem controla, para o cursor laranja (`data:image/…;base64,…`, pequena). */
+	controllerPhoto: string | null;
 	sourceId: string | null;
 }
 
 /** Uma rolagem maior que isso num evento só é lixo (ou abuso). */
 const MAX_WHEEL_PX = 4000;
 const MAX_NAME = 60;
+/** A foto chega como miniatura (128px em WebP, uns poucos KB); acima disto é descartada. */
+const MAX_PHOTO_CHARS = 200_000;
+const PHOTO_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 const CODE_PATTERN = /^[A-Za-z0-9]{1,32}$/;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -121,8 +126,17 @@ export function controllerLabel(value: unknown): string {
 	return text ? Array.from(text).slice(0, MAX_NAME).join('') : 'Alguém';
 }
 
+/** A foto só como imagem embutida (nada de URL: a janela do cursor não sai para a rede). */
+export function controllerPhoto(value: unknown): string | null {
+	return typeof value === 'string' && value.length <= MAX_PHOTO_CHARS && PHOTO_PATTERN.test(value) ? value : null;
+}
+
 export function parseStartOptions(value: unknown): StartOptions {
 	const options = record(value) ?? {};
 	const sourceId = typeof options.sourceId === 'string' && options.sourceId.length <= 128 ? options.sourceId : null;
-	return { controllerName: controllerLabel(options.controllerName), sourceId };
+	return {
+		controllerName: controllerLabel(options.controllerName),
+		controllerPhoto: controllerPhoto(options.controllerPhoto),
+		sourceId
+	};
 }

@@ -34,8 +34,12 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 	control: {
 		capabilities: (): Promise<RemoteControlCapabilities> => ipcRenderer.invoke('control:capabilities'),
 		sharedSources: (): Promise<RemoteControlSharedSource[]> => ipcRenderer.invoke('control:shared-sources'),
-		start: (opts: { controllerName: string; sourceId?: string }): Promise<StartResult> =>
-			ipcRenderer.invoke('control:start', { controllerName: opts?.controllerName, sourceId: opts?.sourceId }),
+		start: (opts: { controllerName: string; controllerPhoto?: string | null; sourceId?: string }): Promise<StartResult> =>
+			ipcRenderer.invoke('control:start', {
+				controllerName: opts?.controllerName,
+				controllerPhoto: opts?.controllerPhoto,
+				sourceId: opts?.sourceId
+			}),
 		input: (event: RemoteInput): void => ipcRenderer.send('control:input', event),
 		stop: (): Promise<void> => ipcRenderer.invoke('control:stop'),
 		onStop: (callback: (reason: StopReason) => void): (() => void) => {

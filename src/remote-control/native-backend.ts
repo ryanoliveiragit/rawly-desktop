@@ -9,10 +9,17 @@
  * - X11: extensão XTEST (`libXtst`, que o próprio Electron já exige).
  *
  * O koffi só carrega na primeira sessão (ou consulta), nunca na abertura do app.
+ *
+ * **Dois cursores** (pedido em 16/09/2026): com `cursor` (a leitura do cursor do sistema), o
+ * mouse de quem controla não arrasta o de quem compartilha. O movimento só desenha o cursor
+ * laranja (`onPointer`); o do sistema vai até o ponto no clique, na roda e enquanto um botão
+ * está apertado (arrastar), e volta para onde a pessoa tinha deixado logo depois, se ela não
+ * mexeu no mouse nesse meio-tempo.
  */
 import type * as KoffiModule from 'koffi';
 import { ControlError, PressedState, type InputBackend } from './backend';
 import {
+	distance,
 	toDipPoint,
 	toPhysicalPoint,
 	toVirtualDeskAbsolute,
@@ -51,8 +58,13 @@ const WHEEL_STEP_PX = 60;
 const MAC_DOUBLE_CLICK_MS = 500;
 const MAC_DOUBLE_CLICK_PT = 4;
 
-interface Injector {
+export interface Injector {
+	/** Movimento para a posição 0–1 na tela controlada. */
 	move(x: number, y: number, heldKeys: readonly string[]): void;
+	/** O ponto nativo (pixels físicos no Windows e no X11, pontos no Mac) da posição 0–1. */
+	pointOf(x: number, y: number): Point;
+	/** Leva o cursor do sistema a um ponto nativo qualquer, inclusive de outra tela. */
+	moveTo(point: Point, heldKeys: readonly string[]): void;
 	button(button: MouseButton, down: boolean, heldKeys: readonly string[]): void;
 	wheel(dx: number, dy: number, heldKeys: readonly string[]): void;
 	key(code: string, down: boolean, heldKeys: readonly string[]): void;
@@ -108,9 +120,16 @@ class WindowsInjector implements Injector {
 		}
 	}
 
-	move(x: number, y: number): void {
+	pointOf(x: number, y: number): Point {
 		const { bounds, scaleFactor, physicalOrigin } = this.screen;
-		const point = toPhysicalPoint(x, y, physicalOrigin, bounds, scaleFactor);
+		return toPhysicalPoint(x, y, physicalOrigin, bounds, scaleFactor);
+	}
+
+	move(x: number, y: number): void {
+		this.moveTo(this.pointOf(x, y));
+	}
+
+	moveTo(point: Point): void {
 		const metric = (index: number) => this.api.GetSystemMetrics(index) as number;
 		const virtualScreen = {
 			x: metric(SM_XVIRTUALSCREEN),
@@ -221,8 +240,16 @@ class MacInjector implements Injector {
 		return event;
 	}
 
+	pointOf(x: number, y: number): Point {
+		return toDipPoint(x, y, this.screen.bounds);
+	}
+
 	move(x: number, y: number, heldKeys: readonly string[] = []): void {
-		this.position = toDipPoint(x, y, this.screen.bounds);
+		this.moveTo(this.pointOf(x, y), heldKeys);
+	}
+
+	moveTo(point: Point, heldKeys: readonly string[] = []): void {
+		this.position = point;
 		// Com um botão apertado o Mac espera "arrastar", não "mover".
 		const dragging = (['left', 'right', 'middle'] as const).find((button) => this.buttonsDown.has(button));
 		const event = dragging
@@ -330,10 +357,17 @@ class X11Injector implements Injector {
 
 	constructor(private readonly screen: ScreenMapping) {}
 
-	move(x: number, y: number): void {
+	pointOf(x: number, y: number): Point {
 		const { bounds, scaleFactor, physicalOrigin } = this.screen;
-		const point = toPhysicalPoint(x, y, physicalOrigin, bounds, scaleFactor);
-		this.api.XTestFakeMotionEvent(this.display, -1, point.x, point.y, 0);
+		return toPhysicalPoint(x, y, physicalOrigin, bounds, scaleFactor);
+	}
+
+	move(x: number, y: number): void {
+		this.moveTo(this.pointOf(x, y));
+	}
+
+	moveTo(point: Point): void {
+		this.api.XTestFakeMotionEvent(this.display, -1, Math.round(point.x), Math.round(point.y), 0);
 		this.api.XFlush(this.display);
 	}
 
@@ -369,13 +403,81 @@ class X11Injector implements Injector {
 
 // ——— Sessão ———
 
+/** Onde está o cursor do sistema, no mesmo espaço de `Injector.pointOf`; `null` quando não dá para saber. */
+export interface SystemCursor {
+	read(): Point | null;
+}
+
+export interface NativeBackendOptions {
+	/** Com ela, os dois cursores ficam independentes; sem ela, o do sistema segue quem controla. */
+	cursor?: SystemCursor | null;
+	/** Cada posição de quem controla (0–1), para desenhar o cursor laranja. */
+	onPointer?: (x: number, y: number) => void;
+	/** Quanto esperar parado antes de devolver o cursor (clique duplo e rolagem seguida não pulam). */
+	returnDelayMs?: number;
+}
+
+/** Distância em que o cursor ainda "está onde o Rawly pôs" (arredondamento do sistema). */
+const PLACED_TOLERANCE = 3;
+const RETURN_DELAY_MS = 350;
+
 export class NativeBackend implements InputBackend {
 	readonly kind = 'native' as const;
 	private readonly pressed = new PressedState();
+	private readonly cursor: SystemCursor | null;
+	private readonly onPointer: (x: number, y: number) => void;
+	private readonly returnDelayMs: number;
+	/** Onde estava o cursor de quem compartilha antes de o Rawly levá-lo. */
+	private home: Point | null = null;
+	/** Onde o Rawly deixou o cursor do sistema por último. */
+	private placed: Point | null = null;
+	private returnTimer: ReturnType<typeof setTimeout> | null = null;
+	private closed = false;
 
-	constructor(private readonly injector: Injector) {}
+	constructor(
+		private readonly injector: Injector,
+		options: NativeBackendOptions = {}
+	) {
+		this.cursor = options.cursor ?? null;
+		this.onPointer = options.onPointer ?? (() => {});
+		this.returnDelayMs = options.returnDelayMs ?? RETURN_DELAY_MS;
+	}
 
 	apply(event: RemoteInput): void {
+		if (event.type !== 'key') this.onPointer(event.x, event.y);
+		if (!this.cursor) {
+			this.applyFollowing(event);
+			return;
+		}
+		const held = () => this.pressed.heldKeys();
+		switch (event.type) {
+			case 'move':
+				// Só arrastando o cursor do sistema acompanha; senão, só o laranja se move.
+				if (this.pressed.heldButtons().length > 0) this.take(event.x, event.y);
+				return;
+			case 'button': {
+				const down = event.action === 'down';
+				if (!down && !this.pressed.heldButtons().includes(event.button)) return;
+				if (down) this.park();
+				this.take(event.x, event.y);
+				if (this.pressed.button(event.button, down)) this.injector.button(event.button, down, held());
+				if (!down) this.scheduleReturn();
+				return;
+			}
+			case 'wheel':
+				this.park();
+				this.take(event.x, event.y);
+				this.injector.wheel(event.dx, event.dy, held());
+				this.scheduleReturn();
+				return;
+			case 'key':
+				this.applyKey(event.code, event.action === 'down');
+				return;
+		}
+	}
+
+	/** O jeito de antes (e o do Wayland): o cursor do sistema segue quem controla. */
+	private applyFollowing(event: RemoteInput): void {
 		const held = () => this.pressed.heldKeys();
 		switch (event.type) {
 			case 'move':
@@ -391,13 +493,15 @@ export class NativeBackend implements InputBackend {
 				this.moveTo(event.x, event.y);
 				this.injector.wheel(event.dx, event.dy, held());
 				return;
-			case 'key': {
-				if (evdevKey(event.code) === null) return;
-				const down = event.action === 'down';
-				if (this.pressed.key(event.code, down)) this.injector.key(event.code, down, held());
+			case 'key':
+				this.applyKey(event.code, event.action === 'down');
 				return;
-			}
 		}
+	}
+
+	private applyKey(code: string, down: boolean): void {
+		if (evdevKey(code) === null) return;
+		if (this.pressed.key(code, down)) this.injector.key(code, down, this.pressed.heldKeys());
 	}
 
 	private moveTo(x: number, y: number): void {
@@ -405,7 +509,64 @@ export class NativeBackend implements InputBackend {
 		this.injector.move(x, y, this.pressed.heldKeys());
 	}
 
+	/** Antes de levar o cursor do sistema: guarda onde a pessoa o deixou (uma vez por "visita"). */
+	private park(): void {
+		this.cancelReturn();
+		if (this.home) {
+			// Ainda está onde o Rawly pôs? Então a casa continua valendo; senão, a pessoa mexeu.
+			const now = this.readCursor();
+			if (!now || !this.placed || distance(now, this.placed) <= PLACED_TOLERANCE) return;
+		}
+		this.home = this.readCursor();
+	}
+
+	private take(x: number, y: number): void {
+		const point = this.injector.pointOf(x, y);
+		this.injector.moveTo(point, this.pressed.heldKeys());
+		this.placed = point;
+	}
+
+	private scheduleReturn(): void {
+		this.cancelReturn();
+		if (this.closed || this.pressed.heldButtons().length > 0) return;
+		this.returnTimer = setTimeout(() => {
+			this.returnTimer = null;
+			this.giveBack();
+		}, this.returnDelayMs);
+	}
+
+	private cancelReturn(): void {
+		if (this.returnTimer) clearTimeout(this.returnTimer);
+		this.returnTimer = null;
+	}
+
+	/** Devolve o cursor para onde a pessoa tinha deixado, se ela não mexeu nele desde então. */
+	private giveBack(): void {
+		const home = this.home;
+		const placed = this.placed;
+		this.home = null;
+		this.placed = null;
+		if (!home || !placed || this.pressed.heldButtons().length > 0) return;
+		const now = this.readCursor();
+		if (!now || distance(now, placed) > PLACED_TOLERANCE) return;
+		try {
+			this.injector.moveTo(home, this.pressed.heldKeys());
+		} catch (error) {
+			console.warn('[rawly] controle remoto: não deu para devolver o cursor', error);
+		}
+	}
+
+	private readCursor(): Point | null {
+		try {
+			const point = this.cursor?.read() ?? null;
+			return point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : null;
+		} catch {
+			return null;
+		}
+	}
+
 	async close(): Promise<void> {
+		this.cancelReturn();
 		const { buttons, keys } = this.pressed.drain();
 		try {
 			for (const button of buttons) this.injector.button(button, false, keys);
@@ -413,6 +574,8 @@ export class NativeBackend implements InputBackend {
 		} catch (error) {
 			console.warn('[rawly] controle remoto: falha ao soltar teclas', error);
 		}
+		this.giveBack();
+		this.closed = true;
 		try {
 			this.injector.close();
 		} catch (error) {
@@ -445,11 +608,15 @@ export function probeNative(platform: NodeJS.Platform): string | null {
 	}
 }
 
-export function openNativeBackend(platform: NodeJS.Platform, screen: ScreenMapping): NativeBackend {
+export function openNativeBackend(
+	platform: NodeJS.Platform,
+	screen: ScreenMapping,
+	options: NativeBackendOptions = {}
+): NativeBackend {
 	try {
-		if (platform === 'win32') return new NativeBackend(new WindowsInjector(screen));
-		if (platform === 'darwin') return new NativeBackend(new MacInjector(screen));
-		if (platform === 'linux') return new NativeBackend(new X11Injector(screen));
+		if (platform === 'win32') return new NativeBackend(new WindowsInjector(screen), options);
+		if (platform === 'darwin') return new NativeBackend(new MacInjector(screen), options);
+		if (platform === 'linux') return new NativeBackend(new X11Injector(screen), options);
 	} catch (error) {
 		if (error instanceof ControlError) throw error;
 		throw new ControlError('O controle remoto não carregou neste computador.', { cause: error });

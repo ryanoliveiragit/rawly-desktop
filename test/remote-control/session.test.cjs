@@ -118,6 +118,104 @@ test('nativo: move antes do clique, ignora tecla desconhecida e solta tudo ao fe
 	]);
 });
 
+/** Um sistema de mentira: o cursor do sistema, o injetor (pontos = fração × 1000) e o que foi chamado. */
+function fakeSystem(start = { x: 50, y: 60 }) {
+	const calls = [];
+	const system = { cursor: { ...start } };
+	const injector = {
+		pointOf: (x, y) => ({ x: x * 1000, y: y * 1000 }),
+		moveTo: (point) => {
+			system.cursor = { ...point };
+			calls.push(['moveTo', point.x, point.y]);
+		},
+		move: () => assert.fail('com a leitura do cursor, o movimento não segue quem controla'),
+		button: (button, down) => calls.push(['button', button, down]),
+		wheel: (dx, dy) => calls.push(['wheel', dx, dy]),
+		key: (code, down) => calls.push(['key', code, down]),
+		close: () => calls.push(['close'])
+	};
+	const pointer = [];
+	const backend = new NativeBackend(injector, {
+		cursor: { read: () => ({ ...system.cursor }) },
+		onPointer: (x, y) => pointer.push([x, y]),
+		returnDelayMs: 15
+	});
+	return { calls, system, backend, pointer };
+}
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('dois cursores: mover só desenha o laranja; o clique leva o do sistema e devolve depois', async () => {
+	const { calls, system, backend, pointer } = fakeSystem();
+	backend.apply({ type: 'move', x: 0.2, y: 0.3 });
+	assert.deepEqual(calls, []);
+	assert.deepEqual(pointer, [[0.2, 0.3]]);
+	backend.apply({ type: 'button', button: 'left', action: 'down', x: 0.5, y: 0.5 });
+	backend.apply({ type: 'move', x: 0.6, y: 0.6 }); // arrastando: o do sistema acompanha
+	backend.apply({ type: 'button', button: 'left', action: 'up', x: 0.6, y: 0.6 });
+	assert.deepEqual(calls, [
+		['moveTo', 500, 500],
+		['button', 'left', true],
+		['moveTo', 600, 600],
+		['moveTo', 600, 600],
+		['button', 'left', false]
+	]);
+	await wait(40);
+	assert.deepEqual(calls.at(-1), ['moveTo', 50, 60]);
+	assert.deepEqual(system.cursor, { x: 50, y: 60 });
+	assert.equal(pointer.length, 4);
+});
+
+test('dois cursores: clique duplo não devolve no meio, e quem mexeu no mouse fica com ele', async () => {
+	const { calls, system, backend } = fakeSystem();
+	const click = (x) => {
+		backend.apply({ type: 'button', button: 'left', action: 'down', x, y: 0.1 });
+		backend.apply({ type: 'button', button: 'left', action: 'up', x, y: 0.1 });
+	};
+	click(0.4);
+	click(0.4);
+	await wait(40);
+	assert.deepEqual(
+		calls.filter((call) => call[0] === 'moveTo'),
+		[
+			['moveTo', 400, 100],
+			['moveTo', 400, 100],
+			['moveTo', 400, 100],
+			['moveTo', 400, 100],
+			['moveTo', 50, 60]
+		]
+	);
+	// Agora a pessoa mexe no próprio mouse logo depois do clique remoto: nada volta.
+	click(0.9);
+	system.cursor = { x: 700, y: 20 };
+	await wait(40);
+	assert.deepEqual(system.cursor, { x: 700, y: 20 });
+	// E o próximo clique guarda a casa nova.
+	backend.apply({ type: 'wheel', dx: 0, dy: 120, x: 0.3, y: 0.3 });
+	await wait(40);
+	assert.deepEqual(calls.slice(-3), [
+		['moveTo', 300, 300],
+		['wheel', 0, 120],
+		['moveTo', 700, 20]
+	]);
+});
+
+test('dois cursores: parar solta o botão e devolve o cursor na hora', async () => {
+	const { calls, system, backend } = fakeSystem({ x: 5, y: 5 });
+	backend.apply({ type: 'button', button: 'right', action: 'down', x: 0.2, y: 0.2 });
+	backend.apply({ type: 'button', button: 'left', action: 'up', x: 0.2, y: 0.2 }); // nunca apertado: descartado
+	await backend.close();
+	assert.deepEqual(calls, [
+		['moveTo', 200, 200],
+		['button', 'right', true],
+		['button', 'right', false],
+		['moveTo', 5, 5],
+		['close']
+	]);
+	assert.deepEqual(system.cursor, { x: 5, y: 5 });
+	await wait(30);
+	assert.equal(calls.length, 5);
+});
+
 test('fontes compartilhadas: da mais antiga para a mais nova, sem repetir', () => {
 	let now = 1000;
 	const registry = new SharedSourceRegistry(3, () => now++);

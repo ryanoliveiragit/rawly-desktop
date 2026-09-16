@@ -10,6 +10,9 @@
  * - um atalho global para na hora, mesmo com o foco em outro app ({@link STOP_SHORTCUT});
  * - fechar, recarregar ou perder a janela do site para; erro na entrada para;
  * - ao parar, tudo que estava apertado é solto.
+ *
+ * Dois cursores (Windows, Mac e X11): o de quem controla é a seta laranja com a foto
+ * (`cursor-overlay.ts`), e o do sistema continua com quem compartilha (`native-backend.ts`).
  */
 import {
 	app,
@@ -29,8 +32,9 @@ import {
 import { isAppUrl } from '../config';
 import { outPath } from '../paths';
 import { ControlError, InputQueue, type InputBackend } from './backend';
-import { fallbackPhysicalOrigin, isWindowSource, pickDisplay } from './geometry';
-import { openNativeBackend, probeNative, type ScreenMapping } from './native-backend';
+import { CursorOverlay } from './cursor-overlay';
+import { fallbackPhysicalOrigin, isWindowSource, pickDisplay, type Point } from './geometry';
+import { openNativeBackend, probeNative, type ScreenMapping, type SystemCursor } from './native-backend';
 import { PortalBackend, probePortal } from './portal-backend';
 import {
 	parseRemoteInput,
@@ -68,6 +72,7 @@ interface Session {
 	backend: InputBackend;
 	queue: InputQueue;
 	overlay: BrowserWindow | null;
+	cursor: CursorOverlay | null;
 	cleanup: Array<() => void>;
 }
 
@@ -149,6 +154,30 @@ function screenMapping(display: Display): ScreenMapping {
 	return { bounds, scaleFactor, physicalOrigin };
 }
 
+/**
+ * O cursor do sistema no espaço em que o injetor move: pontos no Mac, pixels físicos no
+ * Windows e no X11. Sem leitura confiável, `null`: o cursor do sistema volta a seguir quem
+ * controla, como antes.
+ */
+function systemCursor(): SystemCursor | null {
+	const platform = process.platform;
+	if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') return null;
+	return {
+		read: (): Point | null => {
+			const dip = screen.getCursorScreenPoint();
+			if (platform === 'darwin') return dip;
+			try {
+				return screen.dipToScreenPoint(dip);
+			} catch {
+				if (platform === 'win32') return null;
+				// X11 sem a conversão: a escala é uma só para todas as telas.
+				const scale = screen.getDisplayNearestPoint(dip).scaleFactor || 1;
+				return { x: Math.round(dip.x * scale), y: Math.round(dip.y * scale) };
+			}
+		}
+	};
+}
+
 function openOverlay(name: string, display: Display | null, shortcut: string | null, onClosed: () => void): BrowserWindow {
 	const area = (display ?? screen.getPrimaryDisplay()).workArea;
 	const width = Math.min(OVERLAY_WIDTH, Math.max(320, area.width - 24));
@@ -205,6 +234,8 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		const current = session;
 		if (!current) return;
 		session = null;
+		current.cursor?.close();
+		current.cursor = null;
 		for (const undo of current.cleanup.splice(0)) {
 			try {
 				undo();
@@ -223,7 +254,8 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 
 	async function openBackend(
 		sourceId: string | null,
-		parent: BrowserWindow | null
+		parent: BrowserWindow | null,
+		onPointer: (x: number, y: number) => void
 	): Promise<{ backend: InputBackend; display: Display | null }> {
 		if (wayland) {
 			// O portal escolhe a tela no próprio pedido do sistema.
@@ -246,15 +278,25 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		);
 		if (!picked) throw new ControlError('Não achei a tela compartilhada.');
 		if (!picked.exact) console.warn('[rawly] controle remoto: tela compartilhada não identificada, usando a principal');
-		return { backend: openNativeBackend(process.platform, screenMapping(picked.display)), display: picked.display };
+		const backend = openNativeBackend(process.platform, screenMapping(picked.display), {
+			cursor: systemCursor(),
+			onPointer
+		});
+		return { backend, display: picked.display };
 	}
 
-	function begin(owner: WebContents, controllerName: string, backend: InputBackend, display: Display | null): void {
+	function begin(
+		owner: WebContents,
+		controller: { name: string; photo: string | null },
+		backend: InputBackend,
+		display: Display | null
+	): CursorOverlay | null {
 		const cleanup: Array<() => void> = [];
 		const current: Session = {
 			owner,
 			backend,
 			overlay: null,
+			cursor: null,
 			cleanup,
 			queue: new InputQueue(
 				(event) => backend.apply(event),
@@ -299,9 +341,17 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		if (registered) cleanup.push(() => globalShortcut.unregister(STOP_SHORTCUT));
 		else console.warn(`[rawly] controle remoto: o atalho ${STOP_SHORTCUT} não foi registrado`);
 
-		current.overlay = openOverlay(controllerName, display, registered ? shortcutLabel() : null, () => {
+		current.overlay = openOverlay(controller.name, display, registered ? shortcutLabel() : null, () => {
 			if (session === current) void end('user');
 		});
+		if (display && backend.kind === 'native') {
+			try {
+				current.cursor = new CursorOverlay(display, controller.name, controller.photo);
+			} catch (error) {
+				console.warn('[rawly] controle remoto: o cursor de quem controla não abriu', error);
+			}
+		}
+		return current.cursor;
 	}
 
 	ipcMain.handle('control:capabilities', async (event): Promise<RemoteControlCapabilities> => {
@@ -325,14 +375,18 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		};
 		owner.once('did-navigate', abandon);
 		try {
-			const { controllerName, sourceId } = parseStartOptions(raw);
+			const { controllerName, controllerPhoto, sourceId } = parseStartOptions(raw);
 			await end(null);
-			const { backend, display } = await openBackend(sourceId, BrowserWindow.fromWebContents(owner));
+			// O backend avisa cada posição de quem controla; o cursor laranja nasce no `begin`.
+			let cursor: CursorOverlay | null = null;
+			const { backend, display } = await openBackend(sourceId, BrowserWindow.fromWebContents(owner), (x, y) =>
+				cursor?.move(x, y)
+			);
 			if (owner.isDestroyed() || attempt.cancelled) {
 				await withTimeout(backend.close(), CLOSE_TIMEOUT_MS);
 				return { ok: false, error: 'O pedido de controle foi cancelado.' };
 			}
-			begin(owner, controllerName, backend, display);
+			cursor = begin(owner, { name: controllerName, photo: controllerPhoto }, backend, display);
 			return { ok: true };
 		} catch (error) {
 			if (error instanceof ControlError) return { ok: false, error: error.message };

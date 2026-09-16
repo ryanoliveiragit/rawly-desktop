@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:" />
+<title>Cursor de quem controla</title>
+<style>
+	html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+	.arrow { position: absolute; left: 1px; top: 1px; width: 22px; height: 26px; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.35)); }
+	.face {
+		position: absolute; left: 22px; top: 22px; width: 28px; height: 28px; border-radius: 50%;
+		box-sizing: border-box; border: 2px solid #ff7a29; background: #ff7a29; overflow: hidden;
+		display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.35);
+		font: 600 11px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #2a0d00;
+	}
+	.face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+</style>
+</head>
+<body>
+	<svg class="arrow" viewBox="0 0 22 26" aria-hidden="true">
+		<path d="M2 2 L2 21 L7.2 16.4 L10.6 24 L14 22.5 L10.7 15 L18 15 Z" fill="#ff7a29" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round" />
+	</svg>
+	<div class="face" id="face"></div>
+	<script src="cursor-overlay.js"></script>
+</body>
+</html>

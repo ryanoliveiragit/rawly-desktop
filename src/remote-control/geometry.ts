@@ -65,6 +65,10 @@ export function pickDisplay<T extends DisplayLike>(
 	return { display: primary, exact: false };
 }
 
+export function distance(a: Point, b: Point): number {
+	return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 /** Ponto em DIP (o Mac usa assim): nunca passa da última coluna ou linha da tela. */
 export function toDipPoint(x: number, y: number, bounds: Rect): Point {
 	const px = bounds.x + clampUnit(x) * bounds.width;
