@@ -22,7 +22,7 @@ O preload expõe ao site, via `contextBridge`:
 | `version` | a versão da casca (`desktop/package.json`) |
 | `setBadge(count)` | o número de não lidas para o ícone; `0` limpa. Devolve uma Promise |
 | `shortcuts` | atalhos globais (0.5.0+): `setMute(enabled)` registra ou solta o do microfone (`false` se o sistema recusou) e `onMute(callback)` avisa quando foi apertado; o site pede só durante a chamada |
-| `control` | controle remoto da tela: `capabilities`, `sharedSources`, `start`, `input`, `stop`, `onStop` (contrato em `docs/controle-remoto.md`, funcionamento e permissões em `docs/apps.md`) |
+| `control` | controle remoto da tela: `capabilities`, `sharedSources`, `start`, `renew` (0.6.0+), `input`, `stop`, `onStop` (contrato em `docs/controle-remoto.md`, funcionamento e permissões em `docs/apps.md`). Desde a 0.6.0 só começa e só injeta com a licença do servidor (`src/remote-control/lease.ts`) |
 
 O user agent leva o sufixo `RawlyDesktop/<versão>`, se o servidor precisar saber.
 

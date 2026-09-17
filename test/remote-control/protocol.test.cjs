@@ -59,14 +59,18 @@ test('opções de start', () => {
 	assert.deepEqual(parseStartOptions({ controllerName: 'Bia', sourceId: 'screen:1:0' }), {
 		controllerName: 'Bia',
 		controllerPhoto: null,
-		sourceId: 'screen:1:0'
+		sourceId: 'screen:1:0',
+		lease: null
 	});
 	assert.deepEqual(parseStartOptions({ controllerName: 'Bia', sourceId: 7 }), {
 		controllerName: 'Bia',
 		controllerPhoto: null,
-		sourceId: null
+		sourceId: null,
+		lease: null
 	});
-	assert.deepEqual(parseStartOptions(undefined), { controllerName: 'Alguém', controllerPhoto: null, sourceId: null });
+	assert.deepEqual(parseStartOptions(undefined), { controllerName: 'Alguém', controllerPhoto: null, sourceId: null, lease: null });
+	assert.equal(parseStartOptions({ lease: 'v1.a.b' }).lease, 'v1.a.b');
+	assert.equal(parseStartOptions({ lease: 'x'.repeat(1001) }).lease, null);
 });
 
 test('foto de quem controla: só imagem embutida e pequena', () => {

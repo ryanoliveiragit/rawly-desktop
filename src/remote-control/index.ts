@@ -9,6 +9,8 @@
  * - enquanto dura, uma faixa sempre por cima mostra quem controla, com "Parar";
  * - um atalho global para na hora, mesmo com o foco em outro app ({@link STOP_SHORTCUT});
  * - fechar, recarregar ou perder a janela do site para; erro na entrada para;
+ * - só começa e só injeta com a licença do servidor (`lease.ts`), que desconta o tempo do plano:
+ *   sem renovar, a sessão para sozinha (`expired`), mesmo com o site mexido;
  * - ao parar, tudo que estava apertado é solto.
  *
  * Dois cursores (Windows, Mac e X11): o de quem controla é a seta laranja com a foto
@@ -44,6 +46,7 @@ import {
 	type StartResult,
 	type StopReason
 } from './protocol';
+import { LeaseClock, leaseKeyFor, verifyLease } from './lease';
 import { SharedSourceRegistry, type CapturedSource } from './shared-sources';
 
 /**
@@ -69,6 +72,7 @@ type Platform = RemoteControlCapabilities['platform'];
 
 interface Session {
 	owner: WebContents;
+	lease: LeaseClock;
 	backend: InputBackend;
 	queue: InputQueue;
 	overlay: BrowserWindow | null;
@@ -289,11 +293,13 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		owner: WebContents,
 		controller: { name: string; photo: string | null },
 		backend: InputBackend,
-		display: Display | null
+		display: Display | null,
+		lease: LeaseClock
 	): CursorOverlay | null {
 		const cleanup: Array<() => void> = [];
 		const current: Session = {
 			owner,
+			lease,
 			backend,
 			overlay: null,
 			cursor: null,
@@ -307,6 +313,12 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 			)
 		};
 		session = current;
+
+		// A licença venceu sem renovar: para, avisando o site.
+		const leaseTimer = setInterval(() => {
+			if (session === current && !current.lease.valid()) void end('expired');
+		}, 500);
+		cleanup.push(() => clearInterval(leaseTimer));
 
 		// Fechar, recarregar ou perder a página que começou a sessão para o controle.
 		const closed = () => {
@@ -375,7 +387,17 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		};
 		owner.once('did-navigate', abandon);
 		try {
-			const { controllerName, controllerPhoto, sourceId } = parseStartOptions(raw);
+			const { controllerName, controllerPhoto, sourceId, lease } = parseStartOptions(raw);
+			const verified = verifyLease(lease, leaseKeyFor(options.appUrl));
+			if (!verified) {
+				return {
+					ok: false,
+					error: lease
+						? 'A licença do controle não é válida. Confira o relógio do computador e peça de novo.'
+						: 'Recarregue o Rawly (Ctrl+R) para liberar o controle com o app atualizado.'
+				};
+			}
+			const clock = new LeaseClock(verified);
 			await end(null);
 			// O backend avisa cada posição de quem controla; o cursor laranja nasce no `begin`.
 			let cursor: CursorOverlay | null = null;
@@ -386,7 +408,12 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 				await withTimeout(backend.close(), CLOSE_TIMEOUT_MS);
 				return { ok: false, error: 'O pedido de controle foi cancelado.' };
 			}
-			cursor = begin(owner, { name: controllerName, photo: controllerPhoto }, backend, display);
+			if (!clock.valid()) {
+				// O pedido do sistema demorou mais que a licença: o site pede de novo.
+				await withTimeout(backend.close(), CLOSE_TIMEOUT_MS);
+				return { ok: false, error: 'O tempo para liberar o controle passou. Peça de novo.' };
+			}
+			cursor = begin(owner, { name: controllerName, photo: controllerPhoto }, backend, display, clock);
 			return { ok: true };
 		} catch (error) {
 			if (error instanceof ControlError) return { ok: false, error: error.message };
@@ -398,9 +425,18 @@ export function installRemoteControl(options: { appUrl: URL }): RemoteControl {
 		}
 	});
 
+	ipcMain.handle('control:renew', (event, raw: unknown): StartResult => {
+		const current = session;
+		if (!current || event.sender.id !== current.owner.id || !fromApp(event)) return { ok: false, error: 'Sem controle em andamento.' };
+		const verified = verifyLease(raw, leaseKeyFor(options.appUrl));
+		if (!verified || !current.lease.extend(verified)) return { ok: false, error: 'A licença renovada não vale para esta sessão.' };
+		return { ok: true };
+	});
+
 	ipcMain.on('control:input', (event, raw: unknown) => {
 		const current = session;
 		if (!current || event.sender.id !== current.owner.id || !fromApp(event)) return;
+		if (!current.lease.valid()) return;
 		const input = parseRemoteInput(raw);
 		if (input) current.queue.push(input);
 	});

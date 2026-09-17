@@ -44,13 +44,16 @@ export interface RemoteControlSharedSource {
 
 export type StartResult = { ok: true } | { ok: false; error: string };
 
-export type StopReason = 'user' | 'shortcut' | 'error' | 'closed';
+/** `expired`: a licença do tempo do plano venceu sem renovar (`lease.ts`). */
+export type StopReason = 'user' | 'shortcut' | 'error' | 'closed' | 'expired';
 
 export interface StartOptions {
 	controllerName: string;
 	/** A foto de quem controla, para o cursor laranja (`data:image/…;base64,…`, pequena). */
 	controllerPhoto: string | null;
 	sourceId: string | null;
+	/** A licença assinada pelo servidor (`lease.ts`); conferida no `start`. */
+	lease: string | null;
 }
 
 /** Uma rolagem maior que isso num evento só é lixo (ou abuso). */
@@ -137,6 +140,7 @@ export function parseStartOptions(value: unknown): StartOptions {
 	return {
 		controllerName: controllerLabel(options.controllerName),
 		controllerPhoto: controllerPhoto(options.controllerPhoto),
-		sourceId
+		sourceId,
+		lease: typeof options.lease === 'string' && options.lease.length <= 1000 ? options.lease : null
 	};
 }

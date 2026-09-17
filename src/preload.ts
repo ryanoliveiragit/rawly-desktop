@@ -45,12 +45,20 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 	control: {
 		capabilities: (): Promise<RemoteControlCapabilities> => ipcRenderer.invoke('control:capabilities'),
 		sharedSources: (): Promise<RemoteControlSharedSource[]> => ipcRenderer.invoke('control:shared-sources'),
-		start: (opts: { controllerName: string; controllerPhoto?: string | null; sourceId?: string }): Promise<StartResult> =>
+		start: (opts: {
+			controllerName: string;
+			controllerPhoto?: string | null;
+			sourceId?: string;
+			lease?: string;
+		}): Promise<StartResult> =>
 			ipcRenderer.invoke('control:start', {
 				controllerName: opts?.controllerName,
 				controllerPhoto: opts?.controllerPhoto,
-				sourceId: opts?.sourceId
+				sourceId: opts?.sourceId,
+				lease: opts?.lease
 			}),
+		/** A licença renovada pelo servidor (0.6.0+): sem ela, a sessão para quando a anterior vence. */
+		renew: (lease: string): Promise<StartResult> => ipcRenderer.invoke('control:renew', lease),
 		input: (event: RemoteInput): void => ipcRenderer.send('control:input', event),
 		stop: (): Promise<void> => ipcRenderer.invoke('control:stop'),
 		onStop: (callback: (reason: StopReason) => void): (() => void) => {
