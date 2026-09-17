@@ -1,5 +1,6 @@
 import { dialog, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { startMacUpdater } from './mac-updater';
 
 /**
  * Atualização automática pelo próprio site: `latest.yml` (Windows),
@@ -11,14 +12,16 @@ import { autoUpdater } from 'electron-updater';
  * então pergunta se reinicia agora. Se o site ainda não servir os arquivos ou
  * a rede falhar, só registra no log.
  *
- * No Mac só funciona com o app assinado; no Linux, só no AppImage.
+ * Windows e AppImage pelo próprio `electron-updater`; `.rpm` e `.deb` também,
+ * instalando com a senha do computador (pkexec). No Mac, sem a assinatura da
+ * Apple, o do pacote não troca o app: lá quem baixa e troca é o `mac-updater.ts`.
  */
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 export function startUpdater(opts: { enabled: boolean; getWindow: () => BrowserWindow | null }): void {
 	if (!opts.enabled) return;
-	autoUpdater.autoDownload = true;
-	autoUpdater.autoInstallOnAppQuit = true;
+	autoUpdater.autoDownload = process.platform !== 'darwin';
+	autoUpdater.autoInstallOnAppQuit = process.platform !== 'darwin';
 	autoUpdater.logger = {
 		info: (message: unknown) => console.log('[rawly/atualização]', message),
 		warn: (message: unknown) => console.warn('[rawly/atualização]', message),
@@ -28,15 +31,20 @@ export function startUpdater(opts: { enabled: boolean; getWindow: () => BrowserW
 	autoUpdater.on('error', (err) => {
 		console.warn('[rawly/atualização] sem atualização:', err instanceof Error ? err.message : err);
 	});
-	autoUpdater.on('update-downloaded', (info) => {
-		void askToRestart(info.version, opts.getWindow());
-	});
 
-	const check = () => {
-		autoUpdater.checkForUpdates().catch((err: unknown) => {
-			console.warn('[rawly/atualização] falha ao checar:', err instanceof Error ? err.message : err);
+	let check: () => void;
+	if (process.platform === 'darwin') {
+		check = startMacUpdater({ getWindow: opts.getWindow });
+	} else {
+		autoUpdater.on('update-downloaded', (info) => {
+			void askToRestart(info.version, opts.getWindow());
 		});
-	};
+		check = () => {
+			autoUpdater.checkForUpdates().catch((err: unknown) => {
+				console.warn('[rawly/atualização] falha ao checar:', err instanceof Error ? err.message : err);
+			});
+		};
+	}
 	setTimeout(check, 10_000);
 	setInterval(check, SIX_HOURS);
 }

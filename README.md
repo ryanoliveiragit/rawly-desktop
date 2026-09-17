@@ -70,6 +70,14 @@ Nomes dos artefatos (fixos, o site aponta para eles): `Rawly-mac-arm64.dmg`, `Ra
 
 O download é direto do site, sem GitHub: os arquivos ficam no bucket do R2 (o mesmo dos uploads), no prefixo `downloads/desktop/`, e o site os serve em `https://rawly-ten.vercel.app/downloads/desktop/<nome>` redirecionando para uma URL assinada do R2. O atualizador do app lê o `latest*.yml` de lá e segue o mesmo redirecionamento.
 
+Como cada sistema se atualiza (`src/updater.ts`):
+
+- **Windows e AppImage:** o `electron-updater` baixa, pergunta se reinicia e instala.
+- **`.rpm` e `.deb`:** o mesmo, lendo `resources/package-type`; a instalação roda `dnf`/`zypper`/`apt` pelo `pkexec`, que pede a senha do computador.
+- **Mac sem assinatura (desde a 0.4.2):** o Squirrel do Mac recusa app sem assinatura, então `src/mac-updater.ts` faz o trabalho: o `electron-updater` só lê o `latest-mac.yml`; o `.zip` da arquitetura é baixado e conferido pelo sha512, extraído com `ditto` e, ao reiniciar, um script espera o app fechar, troca o `Rawly.app` (devolve o antigo se a troca falhar), tira a quarentena e abre de novo. Aberto de dentro do `.dmg` ou fora de Aplicativos (translocado), não troca. O app trocado é outro executável para o macOS: a Acessibilidade do controle da tela precisa ser ligada de novo.
+
+Nunca dê a um script de página (`.js` copiado pelo `copy-static`) o nome de um módulo `.ts`: a cópia sobrescreve o que o tsc gerou. Foi o que fez a 0.4.0 não abrir; o `copy-static` agora recusa.
+
 1. `cd desktop && npm version patch` (ou `minor`/`major`): sobe a versão em `desktop/package.json`.
 2. Commit, e a tag `desktop-vX.Y.Z` com a mesma versão: `git tag desktop-v0.1.1 && git push origin main desktop-v0.1.1`.
 3. O workflow `Desktop` (`.github/workflows/desktop.yml`) empacota nos três sistemas e anexa os instaladores ao próprio workflow.
@@ -102,7 +110,7 @@ Depois, confira:
 | Secret | Para quê | Sem ele |
 | --- | --- | --- |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | os mesmos nomes do Doppler; o token precisa de leitura e escrita no bucket. A CI usa a API S3 do R2 (`https://<conta>.r2.cloudflarestorage.com`) | os instaladores ficam só nos artefatos do workflow, o site não tem o que servir e o app não se atualiza |
-| `CSC_LINK`, `CSC_KEY_PASSWORD` | certificado Developer ID Application da Apple em base64 (`.p12`) e a senha dele | o app do Mac sai sem assinatura: o Gatekeeper avisa e a pessoa precisa abrir com o botão direito → Abrir. A atualização automática no Mac só funciona com o app assinado |
+| `CSC_LINK`, `CSC_KEY_PASSWORD` | certificado Developer ID Application da Apple em base64 (`.p12`) e a senha dele | o app do Mac sai sem assinatura: o Gatekeeper avisa e a pessoa precisa abrir com o botão direito → Abrir na primeira vez. A atualização segue pelo `mac-updater.ts` |
 | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | notarização do app do Mac (só com o certificado acima) | sem notarização o macOS recente bloqueia o app com "não foi possível verificar" até liberar em Ajustes › Privacidade e Segurança |
 | `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` | certificado de assinatura de código do Windows em base64 (`.pfx`) e a senha | o SmartScreen avisa "editor desconhecido" até o instalador ganhar reputação |
 
