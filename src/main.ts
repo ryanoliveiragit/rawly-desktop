@@ -3,8 +3,9 @@
  * produção, como o Discord. O app inteiro continua no site; aqui ficam só as
  * coisas que um app instalado faz e o navegador não: janela própria lembrada
  * entre aberturas, uma instância só, seletor de tela para o "Compartilhar
- * tela", selo de não lidas no ícone, página offline, atualização automática e o
- * controle remoto da tela (`remote-control/`).
+ * tela", selo de não lidas no ícone, página offline, atualização automática, o
+ * controle remoto da tela (`remote-control/`) e o atalho global do microfone
+ * (`shortcuts.ts`).
  *
  * Segurança: a janela só carrega a origem do app; todo link para fora abre
  * no navegador do sistema; o site roda no sandbox, sem Node, e só enxerga a
@@ -28,6 +29,7 @@ import { outPath, resourcePath } from './paths';
 import { installPermissionHandlers } from './permissions';
 import { installRemoteControl } from './remote-control';
 import { installScreenShare } from './screen-picker';
+import { installShortcuts } from './shortcuts';
 import { startUpdater } from './updater';
 import { DEFAULT_SIZE, readWindowState, trackWindowState } from './window-state';
 
@@ -88,6 +90,7 @@ function bootstrap(): void {
 	}
 	installPermissionHandlers(session.defaultSession, config.appUrl);
 	const remoteControl = installRemoteControl({ appUrl: config.appUrl });
+	installShortcuts({ appUrl: config.appUrl });
 	installScreenShare(
 		() => mainWindow,
 		(source) => remoteControl.recordSharedSource(source)

@@ -31,6 +31,17 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 	version,
 	chrome,
 	setBadge: (count?: number): Promise<void> => ipcRenderer.invoke('badge:set', Number(count ?? 0)),
+	/** Atalhos globais (`shortcuts.ts`): o do microfone vale com o Rawly atrás de outra janela. */
+	shortcuts: {
+		setMute: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('shortcut:mute', enabled === true),
+		onMute: (callback: () => void): (() => void) => {
+			const listener = () => callback();
+			ipcRenderer.on('shortcut:mute-pressed', listener);
+			return () => {
+				ipcRenderer.removeListener('shortcut:mute-pressed', listener);
+			};
+		}
+	},
 	control: {
 		capabilities: (): Promise<RemoteControlCapabilities> => ipcRenderer.invoke('control:capabilities'),
 		sharedSources: (): Promise<RemoteControlSharedSource[]> => ipcRenderer.invoke('control:shared-sources'),

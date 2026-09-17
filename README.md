@@ -7,6 +7,7 @@ Uma casca Electron que abre o site de produção (`https://rawly-ten.vercel.app`
 - selo de não lidas no ícone da dock (Mac), do lançador (Linux) e da barra de tarefas (Windows, com a janela piscando fora de foco);
 - avisos nativos com o nome e o ícone certos no Windows;
 - página "Sem conexão com o Rawly" que volta sozinha quando a rede volta;
+- atalho global do microfone na chamada (Ctrl+Shift+M, ⌘⇧M no Mac), que funciona com o Rawly atrás de outra janela (`src/shortcuts.ts`);
 - atualização automática pelo próprio site (`/downloads/desktop/`).
 
 Segurança: só a origem do app carrega dentro da janela; qualquer link para outro domínio abre no navegador do sistema. O site roda no sandbox, sem Node, e só enxerga a ponte `window.rawlyDesktop`.
@@ -20,6 +21,7 @@ O preload expõe ao site, via `contextBridge`:
 | `platform` | `'darwin'`, `'win32'` ou `'linux'` |
 | `version` | a versão da casca (`desktop/package.json`) |
 | `setBadge(count)` | o número de não lidas para o ícone; `0` limpa. Devolve uma Promise |
+| `shortcuts` | atalhos globais (0.5.0+): `setMute(enabled)` registra ou solta o do microfone (`false` se o sistema recusou) e `onMute(callback)` avisa quando foi apertado; o site pede só durante a chamada |
 | `control` | controle remoto da tela: `capabilities`, `sharedSources`, `start`, `input`, `stop`, `onStop` (contrato em `docs/controle-remoto.md`, funcionamento e permissões em `docs/apps.md`) |
 
 O user agent leva o sufixo `RawlyDesktop/<versão>`, se o servidor precisar saber.
