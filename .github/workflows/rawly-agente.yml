@@ -1,0 +1,108 @@
+# rawly-agente-versao: 1
+# Instalado pelo Rawly (rawlyapp.com.br).
+#
+# O agente lê o chamado, propõe a alteração e abre um pull request. Ele roda
+# AQUI, no seu repositório, com a SUA chave de IA — o Rawly não manda o seu
+# código para IA nenhuma; ele só dispara este workflow e acompanha o PR.
+#
+# Antes de usar, guarde a chave em Settings › Secrets and variables › Actions:
+#   ANTHROPIC_API_KEY  (Claude)   ou   GEMINI_API_KEY  (Google)
+#
+# Nada acontece sozinho: o gatilho é manual, e a saída é sempre um pull request
+# em um ramo novo — nunca um commit direto no ramo principal.
+name: Rawly · agente
+
+on:
+  workflow_dispatch:
+    inputs:
+      tarefa:
+        description: O que fazer, em uma frase
+        required: true
+      contexto:
+        description: O chamado por inteiro (descrição, conversa, o que já se sabe)
+        required: false
+        default: ''
+      arquivos:
+        description: Caminhos que interessam, separados por vírgula
+        required: false
+        default: ''
+      chamado:
+        description: A referência do chamado no Rawly (ex. TCK-142)
+        required: false
+        default: ''
+      verificar:
+        description: Comando que precisa passar antes do PR (ex. npm test)
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: rawly-agente-${{ github.event.inputs.chamado || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  agente:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # O SDK entra numa pasta de trabalho fora do repositório: o PR leva só a
+      # alteração pedida, nunca um node_modules ou um package.json que não era seu.
+      - name: Preparar o agente
+        run: |
+          mkdir -p "$RUNNER_TEMP/rawly-agente"
+          cd "$RUNNER_TEMP/rawly-agente"
+          npm init -y > /dev/null
+          npm install --silent --no-audit --no-fund @anthropic-ai/sdk
+          cp "$GITHUB_WORKSPACE/.github/rawly-agente.mjs" ./agente.mjs
+
+      - name: Pensar e escrever
+        id: agente
+        working-directory: ${{ runner.temp }}/rawly-agente
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RAWLY_REPO: ${{ github.workspace }}
+          RAWLY_TAREFA: ${{ github.event.inputs.tarefa }}
+          RAWLY_CONTEXTO: ${{ github.event.inputs.contexto }}
+          RAWLY_ARQUIVOS: ${{ github.event.inputs.arquivos }}
+          RAWLY_CHAMADO: ${{ github.event.inputs.chamado }}
+        run: node agente.mjs
+
+      - name: Verificar
+        if: ${{ github.event.inputs.verificar != '' }}
+        run: ${{ github.event.inputs.verificar }}
+
+      - name: Abrir o pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAWLY_CHAMADO: ${{ github.event.inputs.chamado }}
+          RAWLY_TAREFA: ${{ github.event.inputs.tarefa }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "O agente não mudou nenhum arquivo. Nada a propor."
+            exit 0
+          fi
+          ramo="rawly/${RAWLY_CHAMADO:-agente}-${GITHUB_RUN_ID}"
+          ramo=$(echo "$ramo" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9/_-' '-')
+          git config user.name "Rawly agente"
+          git config user.email "agente@rawlyapp.com.br"
+          git checkout -b "$ramo"
+          git add -A
+          git commit -m "${RAWLY_CHAMADO:+${RAWLY_CHAMADO}: }${RAWLY_TAREFA}"
+          git push origin "$ramo"
+          gh pr create \
+            --title "${RAWLY_CHAMADO:+${RAWLY_CHAMADO} · }${RAWLY_TAREFA}" \
+            --body "$(cat "$RUNNER_TEMP/rawly-agente/resumo.md" 2>/dev/null || echo 'Proposta do agente do Rawly.')" \
+            --head "$ramo"
