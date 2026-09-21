@@ -1,0 +1,49 @@
+# Instalado pelo Rawly (rawlyapp.com.br).
+#
+# Este workflow é o terminal que aparece na aba Código do Rawly: você digita um
+# comando lá, ele roda AQUI, neste repositório, e a saída volta para a tela.
+#
+# É leitura: as permissões são só `contents: read`, então nada do que roda aqui
+# pode gravar no repositório. Quem pode disparar é quem tem o projeto aberto no
+# Rawly, com a conexão do GitHub da própria empresa.
+name: Rawly · terminal
+run-name: rawly-terminal ${{ inputs.token }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      comando:
+        description: O comando a rodar
+        required: true
+      token:
+        description: Identificador da chamada, para o Rawly achar esta execução
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  comando:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # O job termina sempre em sucesso de propósito: quem falhou foi o comando,
+      # não o CI, e o Rawly lê o código de saída do marcador abaixo. Assim o
+      # histórico do Actions não enche de "falhou" por um `npm test` vermelho.
+      - name: Rodar
+        env:
+          RAWLY_COMANDO: ${{ inputs.comando }}
+        run: |
+          echo "__RAWLY_INICIO__"
+          set +e
+          bash -lc "$RAWLY_COMANDO" 2>&1
+          codigo=$?
+          set -e
+          echo "__RAWLY_FIM__ $codigo"
+          exit 0
