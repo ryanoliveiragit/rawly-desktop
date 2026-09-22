@@ -6,7 +6,7 @@ const Module = require('node:module');
 const path = require('node:path');
 const test = require('node:test');
 
-/** Um Electron de mentira que aceita qualquer chamada: o suficiente para os módulos carregarem. */
+/** Um Electron de mentira que acddeita qualquer chamada: o suficiente para os módulos carregarem. */
 function electronStub(overrides = {}) {
 	const handler = {
 		get(target, prop) {
