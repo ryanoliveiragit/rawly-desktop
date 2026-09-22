@@ -17,6 +17,7 @@
  * ao Podman ou ao Docker da máquina.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { ipcMain, type BrowserWindow } from 'electron';
 
@@ -25,7 +26,52 @@ export interface PlanoAmbiente {
 	setup: string[];
 	run: string | null;
 	port: number;
+	/** O projeto abre uma janela (Electron, Tauri) em vez de servir uma porta. */
+	gui?: boolean;
 	resumo: string;
+}
+
+/**
+ * O que um app de janela precisa dentro do container, e o que ele precisa do
+ * lado de fora.
+ *
+ * Um Electron dentro de um container é um Chromium: ele exige as bibliotecas
+ * gráficas (que a imagem de Node não traz) e um servidor X para desenhar. Aqui
+ * o X é o da própria máquina — o socket é montado no container, e a janela
+ * aparece na tela de quem está usando, como qualquer outro programa. No
+ * Wayland isso passa pelo XWayland, que já está de pé em qualquer sessão
+ * moderna.
+ *
+ * O sandbox do Chromium não funciona sem privilégios que um container comum
+ * não tem; por isso o app roda com ele desligado. Vale dizer o que isso
+ * significa: o isolamento continua sendo o do container, não o do navegador.
+ */
+const LIBS_GUI =
+	'apt-get update -qq && apt-get install -y -qq --no-install-recommends ' +
+	'libgtk-3-0 libnss3 libasound2 libgbm1 libdrm2 libxshmfence1 libxkbcommon0 ' +
+	'libatk-bridge2.0-0 libatspi2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 ' +
+	'libpango-1.0-0 libcairo2 xauth x11-utils > /dev/null';
+
+function argumentosDeTela(): string[] {
+	const display = process.env.DISPLAY;
+	if (!display || process.platform !== 'linux') return [];
+	const args = [
+		'-e', `DISPLAY=${display}`,
+		'-e', 'ELECTRON_DISABLE_SANDBOX=1',
+		'-v', '/tmp/.X11-unix:/tmp/.X11-unix:ro',
+		// O Chromium usa memória compartilhada de verdade; com o padrão de 64 MB
+		// ele fecha sozinho no primeiro quadro.
+		'--shm-size=1g',
+		'--ipc=host',
+		// O SELinux do Fedora barra o socket do X vindo de container.
+		'--security-opt', 'label=disable'
+	];
+	const xauth = process.env.XAUTHORITY;
+	if (xauth) {
+		args.push('-v', `${xauth}:/tmp/.Xauthority:ro`, '-e', 'XAUTHORITY=/tmp/.Xauthority');
+	}
+	if (existsSync('/dev/dri')) args.push('--device', '/dev/dri');
+	return args;
 }
 
 /** Onde tentar baixar a imagem. Em muita rede o Docker Hub não responde. */
@@ -191,6 +237,11 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			if (hostPorta !== plano.port) {
 				log(`\x1b[2mA porta ${plano.port} está ocupada aqui; publicando em ${hostPorta}.\x1b[0m\r\n`);
 			}
+			// App de janela desenha na tela desta máquina; os outros só publicam porta.
+			const tela = plano.gui ? argumentosDeTela() : [];
+			if (plano.gui && tela.length === 0) {
+				log('\x1b[33mSem DISPLAY nesta sessão: a janela do app não terá onde aparecer.\x1b[0m\r\n');
+			}
 			const criou = await correr(
 				alvo,
 				[
@@ -198,6 +249,7 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 					'-v', volume,
 					'-w', '/workspace',
 					'-p', `${hostPorta}:${plano.port}`,
+					...tela,
 					imagem,
 					// 'sleep infinity' não existe no busybox: este laço segura
 					// qualquer imagem de pé.
@@ -214,6 +266,11 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			'exec', nome, 'sh', '-lc',
 			'git config --global --add safe.directory /workspace 2>/dev/null || true'
 		]);
+
+		if (plano.gui) {
+			log('\r\n\x1b[1mInstalando as bibliotecas gráficas\x1b[0m \x1b[2m(um app de janela precisa delas)\x1b[0m\r\n');
+			await correr(alvo, ['exec', '-u', '0', nome, 'sh', '-lc', LIBS_GUI], log);
+		}
 
 		for (const comando of plano.setup) {
 			log(`\r\n\x1b[1mInstalando dependências\x1b[0m\r\n`);
@@ -255,6 +312,10 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			'exec', '-i',
 			'-e', 'HOST=0.0.0.0',
 			'-e', 'PORT=' + String((bruto as { porta?: number }).porta ?? 3000),
+			// Para app de janela: o Electron precisa saber onde desenhar e que o
+			// sandbox dele não vai funcionar aqui dentro.
+			...(process.env.DISPLAY ? ['-e', `DISPLAY=${process.env.DISPLAY}`] : []),
+			'-e', 'ELECTRON_DISABLE_SANDBOX=1',
 			nome, 'sh', '-lc', `cd /workspace && ${comando}`
 		]);
 		rodando.set(nome, processo);
