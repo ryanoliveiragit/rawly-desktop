@@ -42,6 +42,42 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 			};
 		}
 	},
+	/**
+	 * O terminal do app (docs: o shell roda no processo principal, a página só
+	 * desenha). É isto que o Rawly usa quando está aberto aqui dentro; no
+	 * navegador ele fala com a máquina pelo socket, que é mais lento.
+	 */
+	terminal: {
+		disponivel: true,
+		abrir: (pedido: {
+			id: string;
+			cwd: string;
+			cols: number;
+			rows: number;
+			container?: string | null;
+		}): Promise<{ ok: boolean; erro?: string; redimensiona?: boolean }> =>
+			ipcRenderer.invoke('terminal:abrir', pedido),
+		teclas: (id: string, dados: string): void => ipcRenderer.send('terminal:teclas', { id, dados }),
+		tamanho: (id: string, cols: number, rows: number): void =>
+			ipcRenderer.send('terminal:tamanho', { id, cols, rows }),
+		fechar: (id: string): void => ipcRenderer.send('terminal:fechar', { id }),
+		escolherPasta: (): Promise<string | null> => ipcRenderer.invoke('terminal:escolher-pasta'),
+		/** Ouve o que sai de uma aba. Devolve a função que desliga o ouvinte. */
+		aoReceber: (id: string, callback: (dados: string) => void): (() => void) => {
+			const saida = (_evento: unknown, dados: { id: string; dados: string }) => {
+				if (dados?.id === id) callback(dados.dados);
+			};
+			const fim = (_evento: unknown, dados: { id: string }) => {
+				if (dados?.id === id) callback('\r\n[sessão encerrada]\r\n');
+			};
+			ipcRenderer.on('terminal:saida', saida);
+			ipcRenderer.on('terminal:fim', fim);
+			return () => {
+				ipcRenderer.removeListener('terminal:saida', saida);
+				ipcRenderer.removeListener('terminal:fim', fim);
+			};
+		}
+	},
 	control: {
 		capabilities: (): Promise<RemoteControlCapabilities> => ipcRenderer.invoke('control:capabilities'),
 		sharedSources: (): Promise<RemoteControlSharedSource[]> => ipcRenderer.invoke('control:shared-sources'),

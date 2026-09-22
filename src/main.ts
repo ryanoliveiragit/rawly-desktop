@@ -30,6 +30,7 @@ import { installPermissionHandlers } from './permissions';
 import { installRemoteControl } from './remote-control';
 import { installScreenShare } from './screen-picker';
 import { installShortcuts } from './shortcuts';
+import { closeAllTerminals, registerTerminal } from './terminal';
 import { startUpdater } from './updater';
 import { DEFAULT_SIZE, readWindowState, trackWindowState } from './window-state';
 
@@ -66,6 +67,8 @@ if (!app.requestSingleInstanceLock()) {
 	app.on('web-contents-created', (_event, contents) => guardNavigation(contents));
 	app.on('before-quit', () => {
 		quitting = true;
+		// Shell órfão fica rodando para sempre depois que a janela some.
+		closeAllTerminals();
 	});
 	app.on('window-all-closed', () => {
 		if (process.platform !== 'darwin') app.quit();
@@ -91,6 +94,9 @@ function bootstrap(): void {
 	installPermissionHandlers(session.defaultSession, config.appUrl);
 	const remoteControl = installRemoteControl({ appUrl: config.appUrl });
 	installShortcuts({ appUrl: config.appUrl });
+	// O terminal do app: o shell roda aqui dentro, e a página fala com ele por
+	// IPC. É o que faz a aba Código do Rawly responder como uma IDE responde.
+	registerTerminal(() => mainWindow);
 	installScreenShare(
 		() => mainWindow,
 		(source) => remoteControl.recordSharedSource(source)
