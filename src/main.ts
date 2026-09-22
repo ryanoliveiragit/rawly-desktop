@@ -31,6 +31,7 @@ import { installRemoteControl } from './remote-control';
 import { installScreenShare } from './screen-picker';
 import { installShortcuts } from './shortcuts';
 import { closeAllTerminals, registerTerminal } from './terminal';
+import { registerWorkspace } from './workspace';
 import { startUpdater } from './updater';
 import { DEFAULT_SIZE, readWindowState, trackWindowState } from './window-state';
 
@@ -97,6 +98,9 @@ function bootstrap(): void {
 	// O terminal do app: o shell roda aqui dentro, e a página fala com ele por
 	// IPC. É o que faz a aba Código do Rawly responder como uma IDE responde.
 	registerTerminal(() => mainWindow);
+	// O ambiente do projeto (container) também mora aqui: no app não há programa
+	// nenhum para instalar, e é ele que alcança o Podman ou o Docker da máquina.
+	registerWorkspace(() => mainWindow);
 	installScreenShare(
 		() => mainWindow,
 		(source) => remoteControl.recordSharedSource(source)

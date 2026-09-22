@@ -89,6 +89,31 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 			};
 		}
 	},
+	/** O ambiente do projeto: container montado sobre a pasta que o app mantém. */
+	ambiente: {
+		status: (slug: string): Promise<{
+			ok: boolean;
+			motor?: 'podman' | 'docker' | null;
+			nome?: string;
+			existe?: boolean;
+			rodando?: boolean;
+			aviso?: string;
+		}> => ipcRenderer.invoke('ambiente:status', { slug }),
+		preparar: (pedido: {
+			slug: string;
+			pasta: string;
+			plano: unknown;
+			recriar?: boolean;
+		}): Promise<{ ok: boolean; nome?: string; porta?: number; erro?: string }> =>
+			ipcRenderer.invoke('ambiente:preparar', pedido),
+		remover: (slug: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('ambiente:remover', { slug }),
+		/** O log da montagem, enquanto ela acontece. */
+		aoLog: (callback: (dados: string) => void): (() => void) => {
+			const ouvinte = (_evento: unknown, dados: { dados: string }) => callback(dados?.dados ?? '');
+			ipcRenderer.on('ambiente:log', ouvinte);
+			return () => ipcRenderer.removeListener('ambiente:log', ouvinte);
+		}
+	},
 	control: {
 		capabilities: (): Promise<RemoteControlCapabilities> => ipcRenderer.invoke('control:capabilities'),
 		sharedSources: (): Promise<RemoteControlSharedSource[]> => ipcRenderer.invoke('control:shared-sources'),
