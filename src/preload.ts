@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 			nome?: string;
 			existe?: boolean;
 			rodando?: boolean;
+			subindo?: boolean;
 			aviso?: string;
 		}> => ipcRenderer.invoke('ambiente:status', { slug }),
 		preparar: (pedido: {
@@ -107,6 +108,14 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 		}): Promise<{ ok: boolean; nome?: string; porta?: number; erro?: string }> =>
 			ipcRenderer.invoke('ambiente:preparar', pedido),
 		remover: (slug: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('ambiente:remover', { slug }),
+		/** Sobe o projeto dentro do container (o `npm run dev` dele). */
+		rodar: (pedido: {
+			slug: string;
+			comando: string;
+			porta?: number;
+		}): Promise<{ ok: boolean; erro?: string; jaRodando?: boolean }> =>
+			ipcRenderer.invoke('ambiente:rodar', pedido),
+		parar: (slug: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('ambiente:parar', { slug }),
 		/** O log da montagem, enquanto ela acontece. */
 		aoLog: (callback: (dados: string) => void): (() => void) => {
 			const ouvinte = (_evento: unknown, dados: { dados: string }) => callback(dados?.dados ?? '');

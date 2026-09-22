@@ -73,6 +73,9 @@ async function estado(nome: string): Promise<{ existe: boolean; rodando: boolean
 	return { existe: true, rodando: saida.trim() === 'true' };
 }
 
+/** O processo do projeto rodando dentro do container, por projeto. */
+const rodando = new Map<string, ReturnType<typeof spawn>>();
+
 export function registerWorkspace(janela: () => BrowserWindow | null): void {
 	const log = (texto: string) => janela()?.webContents.send('ambiente:log', { dados: texto });
 
@@ -90,7 +93,7 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			};
 		}
 		const nome = nomeDo(slug);
-		return { ok: true, motor: alvo, nome, ...(await estado(nome)) };
+		return { ok: true, motor: alvo, nome, ...(await estado(nome)), subindo: rodando.has(nome) };
 	});
 
 	ipcMain.handle('ambiente:preparar', async (_evento, bruto: unknown) => {
@@ -157,6 +160,58 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 
 		log('\r\n\x1b[32mAmbiente pronto.\x1b[0m As abas do terminal passam a abrir dentro dele.\r\n');
 		return { ok: true, nome, porta: plano.port };
+	});
+
+	/**
+	 * Sobe o projeto dentro do container (o `npm run dev` da vida).
+	 *
+	 * Faltava isto: montar o ambiente instalava as dependências e parava por
+	 * aí, então o endereço do projeto não respondia e a tela ficava carregando
+	 * para sempre. O processo fica vivo aqui, e o log vai para a tela como o de
+	 * qualquer terminal.
+	 */
+	ipcMain.handle('ambiente:rodar', async (_evento, bruto: unknown) => {
+		const { slug, comando } = (bruto ?? {}) as { slug?: string; comando?: string };
+		const alvo = motor();
+		if (!alvo || !slug || !comando) return { ok: false, erro: 'pedido incompleto' };
+		const nome = nomeDo(slug);
+
+		if (rodando.has(nome)) return { ok: true, jaRodando: true };
+		// Um container parado não responde em porta nenhuma.
+		const atual = await estado(nome);
+		if (!atual.existe) return { ok: false, erro: 'Monte o ambiente antes de rodar.' };
+		if (!atual.rodando) await correr(alvo, ['start', nome], log);
+
+		log(`\r\n\x1b[1mSubindo o projeto\x1b[0m \x1b[2m(${comando})\x1b[0m\r\n`);
+		// `-i` mantém o processo preso a este, para pará-lo depois; o HOST 0.0.0.0
+		// é o que faz o servidor do projeto aceitar conexão de fora do container.
+		const processo = spawn(alvo, [
+			'exec', '-i',
+			'-e', 'HOST=0.0.0.0',
+			'-e', 'PORT=' + String((bruto as { porta?: number }).porta ?? 3000),
+			nome, 'sh', '-lc', `cd /workspace && ${comando}`
+		]);
+		rodando.set(nome, processo);
+		const receber = (dados: Buffer) => log(dados.toString().replace(/\n/g, '\r\n'));
+		processo.stdout?.on('data', receber);
+		processo.stderr?.on('data', receber);
+		processo.on('close', (codigo) => {
+			rodando.delete(nome);
+			log(`\r\n\x1b[2m[o projeto parou (código ${codigo ?? 0})]\x1b[0m\r\n`);
+		});
+		return { ok: true };
+	});
+
+	ipcMain.handle('ambiente:parar', async (_evento, bruto: unknown) => {
+		const { slug } = (bruto ?? {}) as { slug?: string };
+		if (!slug) return { ok: false };
+		const nome = nomeDo(slug);
+		rodando.get(nome)?.kill();
+		rodando.delete(nome);
+		// O processo dentro do container não morre junto: derruba pelo nome.
+		const alvo = motor();
+		if (alvo) await correr(alvo, ['exec', nome, 'sh', '-lc', 'pkill -f node || true']);
+		return { ok: true };
 	});
 
 	ipcMain.handle('ambiente:remover', async (_evento, bruto: unknown) => {
