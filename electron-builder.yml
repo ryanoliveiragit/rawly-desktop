@@ -11,7 +11,7 @@
 # `-c.mac.notarize=true` quando o APPLE_ID existe.
 appId: digital.nevus.rawly
 productName: Rawly
-copyright: Copyright © 2026
+copyright: Copyright © 2026 Nevus Digital
 directories:
   buildResources: build
   output: dist
