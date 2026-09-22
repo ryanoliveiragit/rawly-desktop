@@ -17,6 +17,7 @@
  * ao Podman ou ao Docker da máquina.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { ipcMain, type BrowserWindow } from 'electron';
 
 export interface PlanoAmbiente {
@@ -43,6 +44,38 @@ function motor(): 'podman' | 'docker' | null {
 }
 
 const nomeDo = (slug: string) => `rawly-${slug.replace(/[^a-z0-9-]/gi, '')}`;
+
+/**
+ * Uma porta livre nesta máquina, começando pela que o projeto prefere.
+ *
+ * Sem isto, montar o ambiente de um projeto que usa a porta 3000 numa máquina
+ * que já tem algo na 3000 falhava com "address already in use" — e o container
+ * nem chegava a existir. A porta publicada não precisa ser a mesma de dentro:
+ * o projeto continua servindo na 3000 lá dentro, e a tela abre o endereço que
+ * de fato ficou.
+ */
+function portaLivre(preferida: number): Promise<number> {
+	const tentar = (porta: number, restantes: number): Promise<number> =>
+		new Promise((resolve) => {
+			if (restantes <= 0) return resolve(preferida);
+			const servidor = createServer();
+			servidor.once('error', () => resolve(tentar(porta + 1, restantes - 1)));
+			servidor.once('listening', () => {
+				servidor.close(() => resolve(porta));
+			});
+			servidor.listen(porta, '127.0.0.1');
+		});
+	return tentar(preferida, 25);
+}
+
+/** A porta que o container publicou no host, lida dele mesmo. */
+async function portaPublicada(alvo: string, nome: string): Promise<number | null> {
+	const { codigo, saida } = await correr(alvo, ['port', nome]);
+	if (codigo !== 0) return null;
+	const achado = /:(\d+)\s*$/m.exec(saida.trim());
+	return achado ? Number(achado[1]) : null;
+}
+
 
 function correr(
 	programa: string,
@@ -93,7 +126,17 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			};
 		}
 		const nome = nomeDo(slug);
-		return { ok: true, motor: alvo, nome, ...(await estado(nome)), subindo: rodando.has(nome) };
+		const atual = await estado(nome);
+		return {
+			ok: true,
+			motor: alvo,
+			nome,
+			...atual,
+			// A porta que vale é a que o container publicou, não a que o projeto
+			// pediu: elas diferem quando a preferida estava ocupada.
+			porta: atual.existe ? await portaPublicada(alvo, nome) : null,
+			subindo: rodando.has(nome)
+		};
 	});
 
 	ipcMain.handle('ambiente:preparar', async (_evento, bruto: unknown) => {
@@ -107,7 +150,25 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 		log(`\x1b[1mMontando o ambiente do projeto\x1b[0m\r\n\x1b[2m${plano.resumo}\x1b[0m\r\n\r\n`);
 
 		if (pedido.recriar) await correr(alvo, ['rm', '-f', nome]);
-		const atual = await estado(nome);
+		let atual = await estado(nome);
+
+		// Container parado pode falhar ao subir porque a porta que ele reservou
+		// ficou ocupada por outra coisa. Nesse caso ele é refeito com uma porta
+		// livre, em vez de deixar a pessoa com um ambiente que não sobe.
+		if (atual.existe && !atual.rodando) {
+			const ligou = await correr(alvo, ['start', nome], log);
+			if (ligou.codigo !== 0) {
+				if (/address already in use|port is already allocated/i.test(ligou.saida)) {
+					log('\r\n\x1b[33mA porta reservada está ocupada; refazendo o container em outra.\x1b[0m\r\n');
+					await correr(alvo, ['rm', '-f', nome], log);
+					atual = { existe: false, rodando: false };
+				} else {
+					return { ok: false, erro: 'O container não subiu. Veja o log.' };
+				}
+			} else {
+				atual = { existe: true, rodando: true };
+			}
+		}
 
 		if (!atual.existe) {
 			// A imagem vem do primeiro registro que responder.
@@ -126,13 +187,17 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			// A pasta do projeto é montada no container: os mesmos arquivos que o
 			// editor e o git enxergam. `:Z` é o que o SELinux do Fedora exige.
 			const volume = process.platform === 'linux' ? `${pedido.pasta}:/workspace:Z` : `${pedido.pasta}:/workspace`;
+			const hostPorta = await portaLivre(plano.port);
+			if (hostPorta !== plano.port) {
+				log(`\x1b[2mA porta ${plano.port} está ocupada aqui; publicando em ${hostPorta}.\x1b[0m\r\n`);
+			}
 			const criou = await correr(
 				alvo,
 				[
 					'run', '-d', '--name', nome,
 					'-v', volume,
 					'-w', '/workspace',
-					'-p', `${plano.port}:${plano.port}`,
+					'-p', `${hostPorta}:${plano.port}`,
 					imagem,
 					// 'sleep infinity' não existe no busybox: este laço segura
 					// qualquer imagem de pé.
@@ -158,8 +223,9 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 			}
 		}
 
+		const publicada = (await portaPublicada(alvo, nome)) ?? plano.port;
 		log('\r\n\x1b[32mAmbiente pronto.\x1b[0m As abas do terminal passam a abrir dentro dele.\r\n');
-		return { ok: true, nome, porta: plano.port };
+		return { ok: true, nome, porta: publicada };
 	});
 
 	/**

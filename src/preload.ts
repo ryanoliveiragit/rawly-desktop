@@ -123,6 +123,50 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 			return () => ipcRenderer.removeListener('ambiente:log', ouvinte);
 		}
 	},
+	/**
+	 * O projeto no disco: o editor da tela grava aqui, e é por isso que o
+	 * container (que monta esta pasta) recarrega na hora. Commit e envio são
+	 * passos separados, como em qualquer IDE.
+	 */
+	repo: {
+		ler: (pasta: string, caminho: string): Promise<{ ok: boolean; conteudo?: string; erro?: string }> =>
+			ipcRenderer.invoke('repo:ler', { pasta, caminho }),
+		salvar: (pasta: string, caminho: string, conteudo: string): Promise<{ ok: boolean; erro?: string }> =>
+			ipcRenderer.invoke('repo:salvar', { pasta, caminho, conteudo }),
+		arvore: (pasta: string): Promise<{ ok: boolean; arquivos?: string[]; erro?: string }> =>
+			ipcRenderer.invoke('repo:arvore', { pasta }),
+		buscar: (
+			pasta: string,
+			termo: string
+		): Promise<{ ok: boolean; resultados?: { path: string; linha: number; texto: string }[] }> =>
+			ipcRenderer.invoke('repo:buscar', { pasta, termo }),
+		status: (pasta: string): Promise<{
+			ok: boolean;
+			ramo?: string;
+			arquivos?: { path: string; estado: string; diff: string | null }[];
+			porEnviar?: number;
+			erro?: string;
+		}> => ipcRenderer.invoke('repo:status', { pasta }),
+		descartar: (pasta: string, caminho: string): Promise<{ ok: boolean; erro?: string }> =>
+			ipcRenderer.invoke('repo:descartar', { pasta, caminho }),
+		ramos: (pasta: string): Promise<{ ok: boolean; atual?: string; ramos?: string[] }> =>
+			ipcRenderer.invoke('repo:ramos', { pasta }),
+		criarRamo: (pasta: string, nome: string): Promise<{ ok: boolean; erro?: string }> =>
+			ipcRenderer.invoke('repo:criar-ramo', { pasta, nome }),
+		trocarRamo: (pasta: string, nome: string): Promise<{ ok: boolean; erro?: string }> =>
+			ipcRenderer.invoke('repo:trocar-ramo', { pasta, nome }),
+		confirmar: (pedido: {
+			pasta: string;
+			mensagem: string;
+			autor?: string;
+			email?: string;
+		}): Promise<{ ok: boolean; erro?: string }> => ipcRenderer.invoke('repo:confirmar', pedido),
+		enviar: (pedido: {
+			pasta: string;
+			token: string;
+			ramo?: string;
+		}): Promise<{ ok: boolean; ramo?: string; erro?: string }> => ipcRenderer.invoke('repo:enviar', pedido)
+	},
 	control: {
 		capabilities: (): Promise<RemoteControlCapabilities> => ipcRenderer.invoke('control:capabilities'),
 		sharedSources: (): Promise<RemoteControlSharedSource[]> => ipcRenderer.invoke('control:shared-sources'),

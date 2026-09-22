@@ -31,6 +31,7 @@ import { installRemoteControl } from './remote-control';
 import { installScreenShare } from './screen-picker';
 import { installShortcuts } from './shortcuts';
 import { closeAllTerminals, registerTerminal } from './terminal';
+import { registerRepo } from './repo';
 import { registerWorkspace } from './workspace';
 import { startUpdater } from './updater';
 import { DEFAULT_SIZE, readWindowState, trackWindowState } from './window-state';
@@ -101,6 +102,9 @@ function bootstrap(): void {
 	// O ambiente do projeto (container) também mora aqui: no app não há programa
 	// nenhum para instalar, e é ele que alcança o Podman ou o Docker da máquina.
 	registerWorkspace(() => mainWindow);
+	// Ler, salvar e o git da pasta do projeto: é o que faz o editor da tela
+	// mexer nos arquivos que o container está servindo.
+	registerRepo();
 	installScreenShare(
 		() => mainWindow,
 		(source) => remoteControl.recordSharedSource(source)
