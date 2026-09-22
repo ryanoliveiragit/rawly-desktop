@@ -62,6 +62,17 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 			ipcRenderer.send('terminal:tamanho', { id, cols, rows }),
 		fechar: (id: string): void => ipcRenderer.send('terminal:fechar', { id }),
 		escolherPasta: (): Promise<string | null> => ipcRenderer.invoke('terminal:escolher-pasta'),
+		/**
+		 * Deixa o projeto pronto em disco (clona na primeira vez) e devolve onde
+		 * ele ficou. É isto que permite abrir o terminal de um projeto conectado
+		 * sem ninguém ter clonado nada à mão.
+		 */
+		prepararProjeto: (pedido: {
+			slug: string;
+			repoUrl: string;
+			token: string;
+		}): Promise<{ ok: boolean; pasta?: string; novo?: boolean; erro?: string }> =>
+			ipcRenderer.invoke('terminal:preparar-projeto', pedido),
 		/** Ouve o que sai de uma aba. Devolve a função que desliga o ouvinte. */
 		aoReceber: (id: string, callback: (dados: string) => void): (() => void) => {
 			const saida = (_evento: unknown, dados: { id: string; dados: string }) => {

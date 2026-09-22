@@ -18,6 +18,10 @@
  * PowerShell sem PTY: dá para rodar comando, não para rodar tela cheia.
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { dialog, ipcMain, type BrowserWindow } from 'electron';
 
 /** O PTY em Python: abre o shell e ouve o tamanho num canal à parte (fd 3). */
@@ -135,6 +139,45 @@ function abrirProcesso(
 	};
 }
 
+/**
+ * O projeto do Rawly na máquina, preparado pelo próprio app.
+ *
+ * Ninguém deveria precisar clonar nada à mão para mexer no código de um
+ * projeto que já está conectado no Rawly (pedido de 21/09/2026: "o projeto não
+ * pode estar dentro do meu PC — só fica dentro do Rawly o repositório
+ * conectado"). Fisicamente o código precisa existir em algum disco para um
+ * shell trabalhar nele; o que muda é quem cuida: o app clona em
+ * `~/.rawly/projetos/<projeto>` e mantém atualizado, e a pessoa nunca escolhe
+ * pasta nem lembra onde ficou.
+ *
+ * O token de acesso não entra na linha de comando (apareceria em `ps`): ele vai
+ * por variável de ambiente, lida por um auxiliar de credencial do próprio git.
+ */
+const CREDENCIAL =
+	'!f() { echo username=x-access-token; echo "password=$RAWLY_GIT_TOKEN"; }; f';
+
+function git(argumentos: string[], cwd: string, token?: string): Promise<{ ok: boolean; saida: string }> {
+	return new Promise((resolve) => {
+		const processo = spawn('git', argumentos, {
+			cwd,
+			env: token ? { ...process.env, RAWLY_GIT_TOKEN: token } : process.env
+		});
+		let saida = '';
+		processo.stdout.on('data', (p) => (saida += p));
+		processo.stderr.on('data', (p) => (saida += p));
+		processo.on('error', (erro) => resolve({ ok: false, saida: erro.message }));
+		processo.on('close', (codigo) => resolve({ ok: codigo === 0, saida }));
+	});
+}
+
+export interface PrepararProjeto {
+	/** Identificador curto do projeto: vira o nome da pasta. */
+	slug: string;
+	repoUrl: string;
+	/** Token de leitura do GitHub, curto, vindo do Rawly. */
+	token: string;
+}
+
 export interface AbrirTerminal {
 	id: string;
 	cwd: string;
@@ -192,6 +235,35 @@ export function registerTerminal(janela: () => BrowserWindow | null): void {
 			janela()?.webContents.send('terminal:fim', { id, codigo: codigo ?? 0 });
 		});
 		return { ok: true, redimensiona: aberto.redimensiona };
+	});
+
+	/**
+	 * Garante o projeto em disco e devolve a pasta. Clona na primeira vez;
+	 * depois só busca o que mudou, sem tocar no que a pessoa estiver editando.
+	 */
+	ipcMain.handle('terminal:preparar-projeto', async (_evento, bruto: unknown) => {
+		const pedido = (bruto ?? {}) as Partial<PrepararProjeto>;
+		const slug = String(pedido.slug ?? '').replace(/[^a-z0-9-]/gi, '');
+		if (!slug || !pedido.repoUrl) return { ok: false, erro: 'pedido incompleto' };
+
+		const base = join(homedir(), '.rawly', 'projetos', slug);
+		const repo = pedido.repoUrl.replace(/\.git$/, '') + '.git';
+		if (existsSync(join(base, '.git'))) {
+			// Já está aqui: traz o que mudou no repositório, sem mexer no trabalho
+			// em andamento (nada de reset, nada de checkout).
+			await git(['-c', `credential.helper=${CREDENCIAL}`, 'fetch', '--all', '--prune'], base, pedido.token);
+			return { ok: true, pasta: base, novo: false };
+		}
+
+		await mkdir(join(homedir(), '.rawly', 'projetos'), { recursive: true });
+		const clone = await git(
+			['-c', `credential.helper=${CREDENCIAL}`, 'clone', repo, base],
+			homedir(),
+			pedido.token
+		);
+		if (!clone.ok) return { ok: false, erro: clone.saida.slice(-400) };
+		await git(['config', 'user.useConfigOnly', 'false'], base);
+		return { ok: true, pasta: base, novo: true };
 	});
 
 	ipcMain.on('terminal:teclas', (_evento, bruto: unknown) => {
