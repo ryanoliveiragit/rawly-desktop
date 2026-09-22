@@ -11,11 +11,16 @@
  * No navegador o Rawly continua conversando com a máquina pelo socket, que é o
  * melhor possível fora do app. Aqui dentro, não há intermediário.
  *
- * POR QUE NÃO node-pty: ele é código nativo e teria de ser recompilado para
- * cada plataforma e cada versão do Electron, o que quebraria o empacotamento
- * que já funciona. O PTY sai do que o sistema já tem — python3 (que também dá
- * o redimensionamento certo, pelo ioctl) e, se faltar, o `script`. No Windows,
- * PowerShell sem PTY: dá para rodar comando, não para rodar tela cheia.
+ * O PTY vem do `node-pty` (22/09/2026), que é o que o VS Code usa: PTY de
+ * verdade nas três plataformas — inclusive no Windows, pelo ConPTY — com
+ * redimensionamento nativo. Ele é código nativo e precisa ser recompilado para
+ * a versão do Electron (`electron-builder install-app-deps` faz isso, como já
+ * fazia com o koffi).
+ *
+ * O caminho antigo continua como reserva, e não por gosto: se o módulo nativo
+ * não carregar (um empacotamento sem o rebuild, uma arquitetura sem binário), o
+ * terminal ainda abre com o `python3` ou o `script` do sistema, em vez de a aba
+ * simplesmente não funcionar.
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -60,9 +65,19 @@ const PTY_PY = [
 	'os.close(fd)'
 ].join('\n');
 
+/**
+ * O que uma sessão precisa saber fazer, venha ela do node-pty ou do caminho de
+ * reserva. Quem usa não precisa saber de qual dos dois veio.
+ */
+interface Terminal {
+	escrever: (dados: string) => void;
+	tamanho: (cols: number, rows: number) => void;
+	encerrar: () => void;
+	aoSair: (callback: (codigo: number) => void) => void;
+}
+
 interface Sessao {
-	processo: ChildProcessWithoutNullStreams;
-	redimensiona: boolean;
+	terminal: Terminal;
 	decoder: TextDecoder;
 }
 
@@ -102,6 +117,48 @@ function alvoDe(container?: string | null): Alvo {
 		}
 	}
 	return { programa: shell, argumentos: process.platform === 'win32' ? [] : ['-i'] };
+}
+
+/**
+ * O PTY do node-pty. Devolve `null` quando o módulo nativo não carrega — e aí
+ * o caminho de reserva assume.
+ */
+function abrirComNodePty(
+	alvo: Alvo,
+	cwd: string,
+	cols: number,
+	rows: number,
+	aoDados: (texto: string) => void
+): Terminal | null {
+	try {
+		// Carregado sob demanda: um módulo nativo ausente não pode impedir o app
+		// de abrir.
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const pty = require('node-pty') as typeof import('node-pty');
+		const processo = pty.spawn(alvo.programa, alvo.argumentos, {
+			name: 'xterm-256color',
+			cwd,
+			cols,
+			rows,
+			env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+		});
+		processo.onData((dados) => aoDados(dados));
+		return {
+			escrever: (dados) => processo.write(dados),
+			tamanho: (c, r) => {
+				try {
+					processo.resize(c, r);
+				} catch {
+					// Janela fechando no meio do ajuste: nada a fazer.
+				}
+			},
+			encerrar: () => processo.kill(),
+			aoSair: (callback) => processo.onExit(({ exitCode }) => callback(exitCode))
+		};
+	} catch (erro) {
+		console.warn('[rawly/terminal] node-pty indisponível, usando o caminho de reserva:', erro);
+		return null;
+	}
 }
 
 function abrirProcesso(
@@ -201,40 +258,49 @@ export function registerTerminal(janela: () => BrowserWindow | null): void {
 		const cols = Math.min(400, Math.max(20, Number(pedido.cols) || 80));
 		const rows = Math.min(200, Math.max(5, Number(pedido.rows) || 24));
 		const cwd = pedido.cwd && typeof pedido.cwd === 'string' ? pedido.cwd : process.env.HOME || '.';
-		let aberto;
-		try {
-			aberto = abrirProcesso(alvoDe(pedido.container), cwd, cols, rows);
-		} catch (erro) {
-			return { ok: false, erro: erro instanceof Error ? erro.message : 'não abriu' };
+		const alvo = alvoDe(pedido.container);
+		const decoder = new TextDecoder('utf-8');
+		const escrever = (dados: string) => janela()?.webContents.send('terminal:saida', { id, dados });
+
+		let terminal = abrirComNodePty(alvo, cwd, cols, rows, escrever);
+		let nativo = terminal !== null;
+
+		if (!terminal) {
+			// Reserva: o PTY sai do python3 ou do `script` do sistema.
+			let aberto;
+			try {
+				aberto = abrirProcesso(alvo, cwd, cols, rows);
+			} catch (erro) {
+				return { ok: false, erro: erro instanceof Error ? erro.message : 'não abriu' };
+			}
+			const processo = aberto.processo;
+			const receber = (bruto: Buffer) =>
+				// stream: true mantém caractere multibyte inteiro entre pedaços.
+				escrever(decoder.decode(bruto, { stream: true }));
+			processo.stdout.on('data', receber);
+			processo.stderr.on('data', receber);
+			processo.on('error', (erro) =>
+				escrever(`\r\n[não deu para abrir o terminal: ${erro.message}]\r\n`)
+			);
+			terminal = {
+				escrever: (dados) => processo.stdin.write(dados),
+				tamanho: (c, r) => {
+					if (!aberto.redimensiona) return;
+					const controle = processo.stdio[3] as NodeJS.WritableStream | undefined;
+					controle?.write(`R ${r} ${c}\n`);
+				},
+				encerrar: () => processo.kill(),
+				aoSair: (callback) => processo.on('close', (codigo) => callback(codigo ?? 0))
+			};
+			nativo = false;
 		}
 
-		const sessao: Sessao = {
-			processo: aberto.processo,
-			redimensiona: aberto.redimensiona,
-			decoder: new TextDecoder('utf-8')
-		};
-		sessoes.set(id, sessao);
-
-		const mandar = (bruto: Buffer) => {
-			// stream: true mantém caractere multibyte inteiro entre pedaços.
-			janela()?.webContents.send('terminal:saida', {
-				id,
-				dados: sessao.decoder.decode(bruto, { stream: true })
-			});
-		};
-		aberto.processo.stdout.on('data', mandar);
-		aberto.processo.stderr.on('data', mandar);
-		aberto.processo.on('error', (erro) => {
-			janela()?.webContents.send('terminal:saida', {
-				id,
-				dados: `\r\n[não deu para abrir o terminal: ${erro.message}]\r\n`
-			});
-		});
-		aberto.processo.on('close', (codigo) => {
+		sessoes.set(id, { terminal, decoder });
+		terminal.aoSair((codigo) => {
 			sessoes.delete(id);
-			janela()?.webContents.send('terminal:fim', { id, codigo: codigo ?? 0 });
+			janela()?.webContents.send('terminal:fim', { id, codigo });
 		});
-		return { ok: true, redimensiona: aberto.redimensiona };
+		return { ok: true, nativo };
 	});
 
 	/**
@@ -269,18 +335,14 @@ export function registerTerminal(janela: () => BrowserWindow | null): void {
 	ipcMain.on('terminal:teclas', (_evento, bruto: unknown) => {
 		const { id, dados } = (bruto ?? {}) as { id?: string; dados?: string };
 		if (!id || typeof dados !== 'string') return;
-		sessoes.get(id)?.processo.stdin.write(dados);
+		sessoes.get(id)?.terminal.escrever(dados);
 	});
 
 	ipcMain.on('terminal:tamanho', (_evento, bruto: unknown) => {
 		const { id, cols, rows } = (bruto ?? {}) as { id?: string; cols?: number; rows?: number };
 		if (!id || !cols || !rows) return;
-		const sessao = sessoes.get(id);
-		if (!sessao?.redimensiona) return;
-		// O tamanho vai pelo canal de controle, nunca pelo teclado: escrever
-		// `stty` no shell sujaria a tela a cada ajuste.
-		const controle = sessao.processo.stdio[3] as NodeJS.WritableStream | undefined;
-		controle?.write(`R ${rows} ${cols}\n`);
+		// Nunca pelo teclado: escrever `stty` no shell sujaria a tela a cada ajuste.
+		sessoes.get(id)?.terminal.tamanho(cols, rows);
 	});
 
 	/**
@@ -301,13 +363,13 @@ export function registerTerminal(janela: () => BrowserWindow | null): void {
 	ipcMain.on('terminal:fechar', (_evento, bruto: unknown) => {
 		const { id } = (bruto ?? {}) as { id?: string };
 		if (!id) return;
-		sessoes.get(id)?.processo.kill();
+		sessoes.get(id)?.terminal.encerrar();
 		sessoes.delete(id);
 	});
 }
 
 /** Fecha tudo quando o app sai: shell órfão fica rodando para sempre. */
 export function closeAllTerminals(): void {
-	for (const sessao of sessoes.values()) sessao.processo.kill();
+	for (const sessao of sessoes.values()) sessao.terminal.encerrar();
 	sessoes.clear();
 }

@@ -18,11 +18,15 @@ directories:
 files:
   - out/**/*
   - package.json
-# O controle remoto usa o koffi (FFI): o `.node` precisa ficar fora do asar para carregar, e não
-# há o que recompilar para o Electron (N-API, binários prontos por plataforma).
+# Binário nativo não carrega de dentro do asar: os dois que existem ficam fora.
+# O koffi (FFI do controle remoto) vem pronto por plataforma, em N-API; o
+# node-pty (terminal) é compilado para a ABI do Electron, e por isso o rebuild
+# do electron-builder precisa ficar ligado — sem ele o app cai no terminal de
+# reserva em vez de usar o PTY de verdade.
 asarUnpack:
   - node_modules/@koromix/**
-npmRebuild: false
+  - node_modules/node-pty/**
+npmRebuild: true
 extraResources:
   - from: build/badge
     to: badge
