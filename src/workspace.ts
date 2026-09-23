@@ -19,7 +19,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { ipcMain, type BrowserWindow } from 'electron';
+import { BrowserWindow as JanelaDoElectron, ipcMain, shell, type BrowserWindow } from 'electron';
 
 export interface PlanoAmbiente {
 	image: string;
@@ -338,6 +338,34 @@ export function registerWorkspace(janela: () => BrowserWindow | null): void {
 		// O processo dentro do container não morre junto: derruba pelo nome.
 		const alvo = motor();
 		if (alvo) await correr(alvo, ['exec', nome, 'sh', '-lc', 'pkill -f node || true']);
+		return { ok: true };
+	});
+
+	/**
+	 * A pré-visualização do projeto rodando, numa janela do próprio app.
+	 *
+	 * Não dá para embutir numa aba: a página do Rawly é https e o projeto está
+	 * em http://localhost — o navegador recusa a mistura, e é a mesma regra que
+	 * barrou o terminal falando com a rede local. Uma janela à parte, aberta
+	 * pelo app, não tem esse problema e continua sendo "dentro do Rawly".
+	 */
+	ipcMain.handle('ambiente:preview', async (_evento, bruto: unknown) => {
+		const { porta, externo } = (bruto ?? {}) as { porta?: number; externo?: boolean };
+		if (!porta) return { ok: false };
+		const endereco = `http://localhost:${porta}`;
+		if (externo) {
+			await shell.openExternal(endereco);
+			return { ok: true };
+		}
+		const pai = janela();
+		const preview = new JanelaDoElectron({
+			width: 1100,
+			height: 800,
+			title: `Rawly · projeto em ${endereco}`,
+			parent: pai ?? undefined,
+			webPreferences: { sandbox: true, contextIsolation: true, partition: 'persist:rawly-preview' }
+		});
+		await preview.loadURL(endereco);
 		return { ok: true };
 	});
 

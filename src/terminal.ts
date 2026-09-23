@@ -79,7 +79,19 @@ interface Terminal {
 interface Sessao {
 	terminal: Terminal;
 	decoder: TextDecoder;
+	/**
+	 * O que já foi escrito nesta sessão.
+	 *
+	 * O shell continua vivo quando a pessoa sai da aba, mas o desenho do
+	 * terminal mora na página e some com ela. Sem isto, voltar encontrava um
+	 * retângulo preto com um shell vivo do outro lado — o texto do trabalho
+	 * tinha sumido. Com o histórico, reabrir é reencontrar.
+	 */
+	historico: string;
 }
+
+/** O quanto de rolagem cada sessão guarda para quem voltar. */
+const MAX_HISTORICO = 200_000;
 
 const sessoes = new Map<string, Sessao>();
 
@@ -253,14 +265,23 @@ export function registerTerminal(janela: () => BrowserWindow | null): void {
 		const pedido = (bruto ?? {}) as Partial<AbrirTerminal>;
 		const id = String(pedido.id ?? '');
 		if (!id) return { ok: false, erro: 'sem id' };
-		if (sessoes.has(id)) return { ok: true, jaAberta: true };
+		const existente = sessoes.get(id);
+		if (existente) {
+			// Já está de pé: devolve o que foi escrito, para a tela reencontrar a
+			// sessão como ela estava.
+			return { ok: true, jaAberta: true, historico: existente.historico };
+		}
 
 		const cols = Math.min(400, Math.max(20, Number(pedido.cols) || 80));
 		const rows = Math.min(200, Math.max(5, Number(pedido.rows) || 24));
 		const cwd = pedido.cwd && typeof pedido.cwd === 'string' ? pedido.cwd : process.env.HOME || '.';
 		const alvo = alvoDe(pedido.container);
 		const decoder = new TextDecoder('utf-8');
-		const escrever = (dados: string) => janela()?.webContents.send('terminal:saida', { id, dados });
+		const escrever = (dados: string) => {
+			const sessao = sessoes.get(id);
+			if (sessao) sessao.historico = (sessao.historico + dados).slice(-MAX_HISTORICO);
+			janela()?.webContents.send('terminal:saida', { id, dados });
+		};
 
 		let terminal = abrirComNodePty(alvo, cwd, cols, rows, escrever);
 		let nativo = terminal !== null;
@@ -295,7 +316,7 @@ export function registerTerminal(janela: () => BrowserWindow | null): void {
 			nativo = false;
 		}
 
-		sessoes.set(id, { terminal, decoder });
+		sessoes.set(id, { terminal, decoder, historico: '' });
 		terminal.aoSair((codigo) => {
 			sessoes.delete(id);
 			janela()?.webContents.send('terminal:fim', { id, codigo });

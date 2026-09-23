@@ -55,7 +55,7 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 			cols: number;
 			rows: number;
 			container?: string | null;
-		}): Promise<{ ok: boolean; erro?: string; redimensiona?: boolean }> =>
+		}): Promise<{ ok: boolean; erro?: string; jaAberta?: boolean; historico?: string }> =>
 			ipcRenderer.invoke('terminal:abrir', pedido),
 		teclas: (id: string, dados: string): void => ipcRenderer.send('terminal:teclas', { id, dados }),
 		tamanho: (id: string, cols: number, rows: number): void =>
@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld('rawlyDesktop', {
 		}): Promise<{ ok: boolean; erro?: string; jaRodando?: boolean }> =>
 			ipcRenderer.invoke('ambiente:rodar', pedido),
 		parar: (slug: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('ambiente:parar', { slug }),
+		/** Abre o projeto rodando numa janela do app (ou no navegador do sistema). */
+		preview: (porta: number, externo?: boolean): Promise<{ ok: boolean }> =>
+			ipcRenderer.invoke('ambiente:preview', { porta, externo }),
 		/** O log da montagem, enquanto ela acontece. */
 		aoLog: (callback: (dados: string) => void): (() => void) => {
 			const ouvinte = (_evento: unknown, dados: { dados: string }) => callback(dados?.dados ?? '');
