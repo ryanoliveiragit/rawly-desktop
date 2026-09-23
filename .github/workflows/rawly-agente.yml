@@ -23,7 +23,7 @@ on:
         required: false
         default: ''
       arquivos:
-        description: Caminhos que interessam, separados por vírgula
+        description: Caminhos para começar (opcional; o agente lê o resto do repositório sozinho)
         required: false
         default: ''
       chamado:
@@ -77,6 +77,8 @@ jobs:
           RAWLY_CONTEXTO: ${{ github.event.inputs.contexto }}
           RAWLY_ARQUIVOS: ${{ github.event.inputs.arquivos }}
           RAWLY_CHAMADO: ${{ github.event.inputs.chamado }}
+          # O agente roda a verificação sozinho e corrige o que falhar antes de entregar.
+          RAWLY_VERIFICAR: ${{ github.event.inputs.verificar }}
         run: node agente.mjs
 
       - name: Verificar
