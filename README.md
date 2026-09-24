@@ -72,7 +72,15 @@ Nomes dos artefatos (fixos, o site aponta para eles): `Rawly-mac-arm64.dmg`, `Ra
 
 O download é direto do site, sem GitHub: os arquivos ficam no bucket do R2 (o mesmo dos uploads), no prefixo `downloads/desktop/`, e o site os serve em `https://rawly-ten.vercel.app/downloads/desktop/<nome>` redirecionando para uma URL assinada do R2. O atualizador do app lê o `latest*.yml` de lá e segue o mesmo redirecionamento.
 
-Como cada sistema se atualiza (`src/updater.ts`):
+### A atualização leve vem primeiro (desde a 0.8.0)
+
+Quase toda versão nova muda só o nosso código — o Electron, o node-pty e o koffi continuam iguais. Esse código compilado cabe em **poucos megabytes**, contra os 90 a 128 MB de um instalador. Então o app baixa só ele: um `.asar` com o conteúdo de `out/`, gravado na pasta da pessoa (nada de root, nada de senha), que a abertura seguinte carrega no lugar do que veio no pacote.
+
+- `npm run bundle` gera `dist/bundle/Rawly-bundle-X.Y.Z.asar` e o `bundle-latest.json`; a CI (trabalho "pacote leve") sobe os dois para o R2.
+- Quem escolhe o que abrir é `src/boot.ts`, o único arquivo que nunca é substituído. Se o pacote baixado não abrir em duas tentativas, ele é apagado e o app volta ao que veio no instalador (`src/bundle-store.ts`, com teste em `test/bundle-store.test.cjs`). `--sem-bundle` força o do instalador.
+- O `depsHash` do `build-info.json` é a impressão digital das dependências nativas e da versão do Electron. Quando ela muda, o pacote leve não serve e o app cai sozinho no instalador completo — ninguém precisa lembrar de marcar isso.
+
+O instalador completo continua sendo o caminho de quem ainda vai instalar, e o único que resolve mudança de Electron ou de binário nativo. Como cada sistema se atualiza por ele (`src/updater.ts`):
 
 - **Windows e AppImage:** o `electron-updater` baixa, pergunta se reinicia e instala.
 - **`.rpm` e `.deb`:** o mesmo, lendo `resources/package-type`; a instalação roda `dnf`/`zypper`/`apt` pelo `pkexec`, que pede a senha do computador.
@@ -80,12 +88,16 @@ Como cada sistema se atualiza (`src/updater.ts`):
 
 Nunca dê a um script de página (`.js` copiado pelo `copy-static`) o nome de um módulo `.ts`: a cópia sobrescreve o que o tsc gerou. Foi o que fez a 0.4.0 não abrir; o `copy-static` agora recusa.
 
-1. `cd desktop && npm version patch` (ou `minor`/`major`): sobe a versão em `desktop/package.json`.
-2. Commit, e a tag `desktop-vX.Y.Z` com a mesma versão: `git tag desktop-v0.1.1 && git push origin main desktop-v0.1.1`.
-3. O workflow `Desktop` (`.github/workflows/desktop.yml`) empacota nos três sistemas e anexa os instaladores ao próprio workflow.
-4. Com os secrets `R2_*`, cada sistema sobe os seus instaladores e o seu `latest*.yml` para `downloads/desktop/` no bucket (os instaladores primeiro, o yml por último, para ninguém ver a versão nova antes dos arquivos). Cada publicação sobrescreve a anterior. Daí em diante:
-   - os links diretos funcionam: `https://rawly-ten.vercel.app/downloads/desktop/Rawly-Setup-x64.exe` (e os outros nomes acima);
-   - o app instalado encontra a versão nova sozinho (checa ao abrir e a cada 6 h, baixa em silêncio e pergunta se reinicia).
+```
+npm run soltar -- "o que mudou nesta versão"
+npm run soltar -- --minor "uma mudança maior"
+```
+
+É um comando só: ele sobe o número da versão, commita, cria a tag `vX.Y.Z` e empurra. A CI (`.github/workflows/build.yml`) faz o resto — o pacote leve primeiro, os três instaladores em seguida, tudo para `downloads/desktop/` no R2 (os arquivos antes dos manifestos, para ninguém ver a versão nova antes deles). Daí em diante:
+
+- quem já tem o app recebe o **pacote leve** sozinho, sem instalar nada e sem senha; ele entra na abertura seguinte (ou na hora, se a pessoa aceitar reiniciar);
+- quem ainda vai instalar pega o instalador em `/baixar`;
+- o menu "Rawly › Procurar atualizações…" força a checagem e sempre responde alguma coisa.
 
 Rodando o workflow à mão, marque "Subir para o R2" para publicar; sem marcar, só gera os artefatos.
 

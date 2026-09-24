@@ -5,12 +5,19 @@
 # repositório público, e a casca não tem segredo nenhum — só abre o site.
 #
 # Roda ao empurrar uma tag `vX.Y.Z` (a versão de `package.json` tem que ser a
-# mesma) ou à mão. Os instaladores ficam sempre anexados ao workflow. Com os
-# secrets R2_* (os mesmos nomes do Doppler), cada sistema também sobe os seus
-# instaladores e o seu `latest*.yml` para o bucket, no prefixo
-# `downloads/desktop/`, de onde o site serve o download direto
-# (`https://rawly-ten.vercel.app/downloads/desktop/<nome>`) e o app instalado
-# se atualiza sozinho. Nada passa pelo GitHub Releases.
+# mesma — `npm run soltar` cuida das duas) ou à mão. Os instaladores ficam
+# sempre anexados ao workflow. Com os secrets R2_* (os mesmos nomes do
+# Doppler), cada sistema também sobe os seus instaladores e o seu `latest*.yml`
+# para o bucket, no prefixo `downloads/desktop/`, de onde o site serve o
+# download direto e o app instalado se atualiza sozinho. Nada passa pelo GitHub
+# Releases.
+#
+# O PRIMEIRO trabalho é o `pacote`: o código do app num `.asar` de poucos
+# megabytes, que quem já tem o Rawly instalado baixa sozinho e passa a usar na
+# abertura seguinte — sem instalador e sem senha. Os instaladores completos
+# continuam saindo, para quem ainda vai instalar e para quando o Electron ou um
+# binário nativo mudarem (aí o `depsHash` não bate e o app recusa o pacote leve
+# sozinho).
 name: Instaladores
 
 on:
@@ -31,6 +38,70 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pacote:
+    name: pacote leve
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Conferir que a tag bate com a versão
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::a tag $GITHUB_REF_NAME não bate com package.json ($version)"
+            exit 1
+          fi
+
+      # O pacote leve é só o nosso código compilado: não precisa de binário
+      # nativo, então `--ignore-scripts` evita compilar o node-pty à toa.
+      - run: npm ci --ignore-scripts
+      - run: npm run bundle
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rawly-pacote
+          if-no-files-found: error
+          path: dist/bundle/*
+
+      - name: Subir para o R2 (downloads/desktop/)
+        if: github.ref_type == 'tag' || inputs.publish
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          AWS_DEFAULT_REGION: auto
+        run: |
+          if [ -z "$R2_ACCOUNT_ID" ] || [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ] || [ -z "$R2_BUCKET" ]; then
+            echo "::notice::Sem os secrets R2_*: o pacote leve fica só nos artefatos deste workflow."
+            exit 0
+          fi
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          endpoint="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          prefix="s3://$R2_BUCKET/downloads/desktop"
+          # O `.asar` primeiro, o manifesto por último: quem checar no meio do
+          # caminho não encontra um manifesto apontando para um arquivo que
+          # ainda não existe.
+          for file in dist/bundle/Rawly-bundle-*.asar; do
+            aws s3 cp "$file" "$prefix/$(basename "$file")" --endpoint-url "$endpoint" \
+              --content-type application/octet-stream --cache-control "public, max-age=86400" --only-show-errors
+          done
+          aws s3 cp dist/bundle/bundle-latest.json "$prefix/bundle-latest.json" --endpoint-url "$endpoint" \
+            --content-type application/json --cache-control no-cache --only-show-errors
+          echo "pacote leve no ar: quem já tem o app recebe sozinho, sem reinstalar."
+
   build:
     name: ${{ matrix.target }}
     strategy:
@@ -160,4 +231,4 @@ jobs:
             aws s3 cp "$file" "$prefix/$(basename "$file")" --endpoint-url "$endpoint" \
               --content-type text/yaml --cache-control no-cache --only-show-errors
           done
-          echo "no ar em https://rawly-ten.vercel.app/downloads/desktop/"
+          echo "instaladores no ar em /downloads/desktop/"

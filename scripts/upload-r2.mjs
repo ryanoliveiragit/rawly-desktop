@@ -1,5 +1,6 @@
-// Sobe os instaladores de `dist/` para o R2, em `downloads/desktop/<nome>`, de
-// onde o site os serve (`/downloads/desktop/<nome>`) e o atualizador lê.
+// Sobe os instaladores de `dist/` — e o pacote leve de `dist/bundle/` — para o
+// R2, em `downloads/desktop/<nome>`, de onde o site os serve
+// (`/downloads/desktop/<nome>`) e o atualizador lê.
 //
 //   doppler run -p rawly -c prd -- npm run upload:r2
 //   npm run upload:r2 -- --only Rawly-linux-x86_64.AppImage,latest-linux.yml
@@ -17,7 +18,11 @@ import { fileURLToPath } from 'node:url';
 import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
+// O pacote leve (`npm run bundle`) sai numa pasta à parte, para não se misturar
+// com os instaladores; no R2 os dois moram no mesmo prefixo.
+const BUNDLE_DIR = path.join(DIST, 'bundle');
 const PREFIX = 'downloads/desktop/';
+const BUNDLE_MANIFEST = 'bundle-latest.json';
 
 const INSTALLERS = [
 	'Rawly-mac-arm64.dmg',
@@ -47,24 +52,44 @@ const onlyArg = args.find((a) => a.startsWith('--only='))?.slice('--only='.lengt
 const only = onlyArg ? new Set(onlyArg.split(',').map((s) => s.trim()).filter(Boolean)) : null;
 
 const present = new Set(await readdir(DIST).catch(() => []));
-// Ordem: pacotes e blockmaps primeiro, manifestos por último.
-const queue = ALLOWED.filter((name) => present.has(name) && (!only || only.has(name)));
+const noBundle = new Set(await readdir(BUNDLE_DIR).catch(() => []));
+const pacoteLeve = [...noBundle].filter((n) => /^Rawly-bundle-\d+\.\d+\.\d+\.asar$/.test(n));
+// Ordem: pacotes e blockmaps primeiro, manifestos por último — e o
+// `bundle-latest.json` depois do `.asar` que ele aponta, pela mesma razão.
+const queue = [
+	...pacoteLeve,
+	...ALLOWED.filter((name) => present.has(name)),
+	...(noBundle.has(BUNDLE_MANIFEST) ? [BUNDLE_MANIFEST] : [])
+].filter((name) => !only || only.has(name));
 if (queue.length === 0) {
 	console.error(`Nada para subir em ${DIST}: nenhum arquivo da lista está lá.`);
 	process.exit(1);
 }
 if (only) {
-	for (const name of only) if (!present.has(name)) console.warn(`aviso: ${name} não está em dist/`);
+	for (const name of only) {
+		if (!present.has(name) && !noBundle.has(name)) console.warn(`aviso: ${name} não está em dist/`);
+	}
 }
 
-const isManifest = (name) => name.endsWith('.yml');
-const contentTypeOf = (name) => (isManifest(name) ? 'text/yaml; charset=utf-8' : 'application/octet-stream');
-const cacheControlOf = (name) => (isManifest(name) ? 'no-cache' : 'public, max-age=300');
+/** O pacote leve mora em `dist/bundle/`; o resto, direto em `dist/`. */
+const pastaDe = (name) => (noBundle.has(name) && !present.has(name) ? BUNDLE_DIR : DIST);
+
+const isManifest = (name) => name.endsWith('.yml') || name === BUNDLE_MANIFEST;
+const contentTypeOf = (name) =>
+	name === BUNDLE_MANIFEST
+		? 'application/json; charset=utf-8'
+		: isManifest(name)
+			? 'text/yaml; charset=utf-8'
+			: 'application/octet-stream';
+const cacheControlOf = (name) =>
+	// O pacote leve leva a versão no nome: aquele arquivo nunca muda, então pode
+	// ficar guardado o dia inteiro.
+	isManifest(name) ? 'no-cache' : name.endsWith('.asar') ? 'public, max-age=86400' : 'public, max-age=300';
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-console.log(`${dryRun ? '[simulação] ' : ''}${queue.length} arquivo(s) de ${DIST} → r2:${PREFIX}`);
+console.log(`${dryRun ? '[simulação] ' : ''}${queue.length} arquivo(s) → r2:${PREFIX}`);
 for (const name of queue) {
-	const { size } = await stat(path.join(DIST, name));
+	const { size } = await stat(path.join(pastaDe(name), name));
 	console.log(`  ${name} (${mb(size)})`);
 }
 if (dryRun) process.exit(0);
@@ -82,7 +107,7 @@ const client = new S3Client({
 
 let failed = 0;
 for (const name of queue) {
-	const file = path.join(DIST, name);
+	const file = path.join(pastaDe(name), name);
 	const { size } = await stat(file);
 	const key = `${PREFIX}${name}`;
 	process.stdout.write(`↑ ${name} … `);

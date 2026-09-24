@@ -33,7 +33,8 @@ import { installShortcuts } from './shortcuts';
 import { closeAllTerminals, registerTerminal } from './terminal';
 import { registerRepo } from './repo';
 import { registerWorkspace } from './workspace';
-import { startUpdater } from './updater';
+import { procurar as procurarAtualizacao, startUpdater } from './updater';
+import { bundleAbriuBem, versaoEmUso } from './bundle-store';
 import { DEFAULT_SIZE, readWindowState, trackWindowState } from './window-state';
 
 const APP_USER_MODEL_ID = 'digital.nevus.rawly';
@@ -81,13 +82,17 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function bootstrap(): void {
+	// Chegamos de pé: se estamos rodando por um pacote leve, ele está bom e a
+	// contagem de tentativas volta a zero (`bundle-store.escolherBundle`).
+	bundleAbriuBem();
 	app.userAgentFallback = desktopUserAgent(app.userAgentFallback);
-	aboutPanel(config.appUrl);
+	aboutPanel(config.appUrl, versaoEmUso());
 	Menu.setApplicationMenu(
 		buildMenu({
 			dev: config.dev,
 			reload: () => mainWindow?.webContents.reload(),
-			about: () => app.showAboutPanel()
+			about: () => app.showAboutPanel(),
+			procurarAtualizacao: () => void procurarAtualizacao(true)
 		})
 	);
 	if (process.platform !== 'darwin') {
@@ -118,7 +123,8 @@ function bootstrap(): void {
 	createMainWindow();
 	startUpdater({
 		enabled: app.isPackaged && !config.dev && !config.screenshotPath,
-		getWindow: () => mainWindow
+		getWindow: () => mainWindow,
+		appUrl: config.appUrl
 	});
 }
 
@@ -127,7 +133,7 @@ function desktopUserAgent(base: string): string {
 	const escaped = app.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	return `${base
 		.replace(new RegExp(` ${escaped}/[^ ]+`), '')
-		.replace(/ Electron\/[^ ]+/, '')} RawlyDesktop/${app.getVersion()}`;
+		.replace(/ Electron\/[^ ]+/, '')} RawlyDesktop/${versaoEmUso()}`;
 }
 
 function webPreferences(): BrowserWindowConstructorOptions['webPreferences'] {

@@ -6,7 +6,7 @@
 	"author": "Nevus Digital",
 	"homepage": "https://rawly-ten.vercel.app",
 	"license": "UNLICENSED",
-	"main": "out/main.js",
+	"main": "out/boot.js",
 	"desktopName": "rawly-desktop.desktop",
 	"scripts": {
 		"typecheck": "tsc --noEmit",
@@ -20,6 +20,8 @@
 		"dist:mac": "npm run compile && node scripts/koffi-mac.mjs && electron-builder --mac --publish never",
 		"dist:win": "npm run compile && electron-builder --win --publish never",
 		"dist:linux": "npm run compile && electron-builder --linux --publish never",
+		"bundle": "npm run compile && node scripts/make-bundle.mjs",
+		"soltar": "node scripts/soltar.mjs",
 		"upload:r2": "node scripts/upload-r2.mjs",
 		"publish:local": "bash scripts/publish-local.sh"
 	},
@@ -31,6 +33,7 @@
 	},
 	"devDependencies": {
 		"@aws-sdk/client-s3": "^3.1132.0",
+		"@electron/asar": "^3.4.1",
 		"@types/node": "^24.0.0",
 		"electron": "^44.3.0",
 		"electron-builder": "^26.15.3",

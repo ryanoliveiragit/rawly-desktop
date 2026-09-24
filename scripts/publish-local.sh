@@ -15,6 +15,8 @@ export CSC_IDENTITY_AUTO_DISCOVERY=false
 
 npm ci
 npm run compile
+# O pacote leve: é ele que quem já tem o app instalado vai receber sozinho.
+node scripts/make-bundle.mjs
 case "$(uname -s)" in
 	Darwin) node scripts/koffi-mac.mjs && npx electron-builder --mac --arm64 --x64 --publish never ;;
 	Linux) npx electron-builder --linux --publish never ;;
